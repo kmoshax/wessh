@@ -1,4 +1,5 @@
-//! Swap model and quality, face selection, paste mask and enhancement.
+//! Swap quality, face selection, paste mask and enhancement. The swap model itself is not a
+//! choice: wajh ships one curated model (see [`wajh_core::assets::required`]).
 
 use super::super::Frame;
 use super::{caption, description, labeled_slider, percent, percent_points, section, switch_row, toggle_section};
@@ -6,18 +7,11 @@ use crate::ui::components::{Dropdown, SegmentedButton};
 use crate::ui::icons;
 use crate::ui::theme::{self, TypeRole, spacing};
 use eframe::egui::{Align, Layout, Ui};
-use wajh_core::assets::SwapModel;
 use wajh_core::pipeline::FaceOrder;
 use wajh_core::pipeline::pixel_boost::boosted_size;
 
 // ── Swap ───────────────────────────────────────────────────────────────────────
 
-const MODELS: [(SwapModel, &str); 4] = [
-    (SwapModel::Inswapper, SwapModel::Inswapper.label()),
-    (SwapModel::Hyperswap1a, SwapModel::Hyperswap1a.label()),
-    (SwapModel::Hyperswap1b, SwapModel::Hyperswap1b.label()),
-    (SwapModel::Hyperswap1c, SwapModel::Hyperswap1c.label()),
-];
 const FACE_ORDERS: [(FaceOrder, &str); 5] = [
     (FaceOrder::LargeToSmall, FaceOrder::LargeToSmall.label()),
     (FaceOrder::LeftToRight, FaceOrder::LeftToRight.label()),
@@ -26,14 +20,15 @@ const FACE_ORDERS: [(FaceOrder, &str); 5] = [
     (FaceOrder::BestScore, FaceOrder::BestScore.label()),
 ];
 const DETECTOR_SIZES: [(usize, &str); 3] = [(320, "320"), (480, "480"), (640, "640")];
-/// Swap output sizes offered for pixel boost (only whole multiples of the model's native size apply).
-const BOOST_SIZES: [usize; 4] = [128, 256, 384, 512];
+/// Largest pixel-boost output offered: `FaceFusion`'s largest (512 px); beyond it the cost
+/// ((size / native)² swaps per face) outgrows the gain.
+const MAX_BOOST_SIZE: usize = 512;
 
 pub(super) fn swap(ui: &mut Ui, frame: &mut Frame<'_>) {
     let settings = &mut *frame.settings;
     let live = !frame.offline;
     section(ui, icons::SWAP_HORIZ, "Swap", |ui| {
-        ui.add(Dropdown::new("Model", &mut settings.swap_model, &MODELS).icon(icons::MEMORY));
+        // The curated model (`SwapModel::default()`, unless a developer picked another with --model).
         pixel_boost(ui, settings.swap_model.resolution(), &mut settings.pixel_boost);
         switch_row(ui, icons::GROUPS, "All faces", "Swap every face, not just the first", &mut settings.many_faces);
         ui.add(Dropdown::new("Face order", &mut settings.face_order, &FACE_ORDERS).icon(icons::SORT));
@@ -46,11 +41,11 @@ pub(super) fn swap(ui: &mut Ui, frame: &mut Frame<'_>) {
     });
 }
 
-/// Output-size segments with the swap-time cost of the current choice.
+/// Output-size segments (whole multiples of the model's `native` resolution up to
+/// [`MAX_BOOST_SIZE`]) with the swap-time cost of the current choice.
 /// `boost` stores `0` for the model's native size, as [`wajh_core::Settings`] expects.
 fn pixel_boost(ui: &mut Ui, native: usize, boost: &mut usize) {
-    let labels: Vec<(usize, String)> =
-        BOOST_SIZES.iter().filter(|&&size| size % native == 0).map(|&size| (size, size.to_string())).collect();
+    let labels: Vec<(usize, String)> = boost_sizes(native).map(|size| (size, size.to_string())).collect();
     let options: Vec<(usize, &str)> = labels.iter().map(|(size, label)| (*size, label.as_str())).collect();
     let mut size = boosted_size(native, *boost);
     let factor = (size / native).pow(2);
@@ -67,6 +62,12 @@ fn pixel_boost(ui: &mut Ui, native: usize, boost: &mut usize) {
     if ui.add(SegmentedButton::new(&mut size, &options)).changed() {
         *boost = if size == native { 0 } else { size };
     }
+}
+
+/// Pixel-boost sizes for a model of `native` resolution: ×1, ×2, … up to [`MAX_BOOST_SIZE`]
+/// (always at least the native size).
+fn boost_sizes(native: usize) -> impl Iterator<Item = usize> {
+    (1..).map(move |factor| factor * native).take_while(move |&size| size == native || size <= MAX_BOOST_SIZE)
 }
 
 // ── Mask ───────────────────────────────────────────────────────────────────────
@@ -100,4 +101,17 @@ pub(super) fn enhance(ui: &mut Ui, frame: &mut Frame<'_>) {
         description(ui, "Restore skin and eye detail with GPEN. Costs a few milliseconds per face.");
         labeled_slider(ui, "Blend", &mut settings.enhance_blend, 0.0..=1.0, percent);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::boost_sizes;
+
+    #[test]
+    fn boost_sizes_are_multiples_of_the_native_resolution() {
+        assert_eq!(boost_sizes(128).collect::<Vec<_>>(), [128, 256, 384, 512]);
+        assert_eq!(boost_sizes(256).collect::<Vec<_>>(), [256, 512]);
+        assert_eq!(boost_sizes(512).collect::<Vec<_>>(), [512]);
+        assert_eq!(boost_sizes(1024).collect::<Vec<_>>(), [1024]);
+    }
 }

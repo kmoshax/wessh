@@ -1,4 +1,4 @@
-use crate::commands::setup::{platform::Flavour, sources::ORT_VERSION};
+use crate::install::{platform::Flavour, sources::ORT_VERSION};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use wajh_core::assets::{OccluderModel, SwapModel};
@@ -25,8 +25,9 @@ pub struct Options {
     /// Inference backend.
     #[arg(long, global = true, value_enum, default_value_t)]
     pub device: Device,
-    /// Face swap model.
-    #[arg(long, global = true, value_enum, default_value_t)]
+    /// Face swap model. Developer / benchmarking option: wajh ships one curated model set, and
+    /// setup and the app's onboarding only install the default model.
+    #[arg(long, global = true, value_enum, default_value_t, hide = true)]
     pub model: SwapModel,
     /// Restore detail with GPEN after swapping; swap models output 128–256 px faces, which look
     /// soft once scaled up to the face. Costs ≈10 ms per face on a GPU; turn off on CPU.
@@ -150,9 +151,9 @@ pub enum Command {
         #[arg(long)]
         motion: bool,
     },
-    /// Download the models the chosen options need.
+    /// Download the curated models (what the app's onboarding installs).
     Models,
-    /// Install the ONNX Runtime build for this GPU, its CUDA libraries and the default models.
+    /// Install the ONNX Runtime build for this GPU, its CUDA (and TensorRT) libraries and the models.
     Setup(SetupArgs),
     /// Check the installation and explain how to fix what is missing.
     Doctor,
@@ -166,16 +167,17 @@ pub struct SetupArgs {
     /// Runtime build to install [default: chosen from the GPU and driver].
     #[arg(long, value_enum)]
     pub flavour: Option<Flavour>,
-    /// Also install TensorRT (NVIDIA only; large download, fastest inference).
+    /// Skip TensorRT, which is otherwise installed on NVIDIA GPUs (a 3.5 GB download; the
+    /// fastest backend). The app will offer to download it later.
     #[arg(long)]
-    pub tensorrt: bool,
+    pub no_tensorrt: bool,
     /// ONNX Runtime release to install.
     #[arg(long, default_value = ORT_VERSION)]
     pub ort_version: String,
     /// Download and reinstall components even if they are already present.
     #[arg(long)]
     pub force: bool,
-    /// Skip the models (they are otherwise fetched on first use).
+    /// Skip the models (the app downloads them on first start).
     #[arg(long)]
     pub no_models: bool,
 }

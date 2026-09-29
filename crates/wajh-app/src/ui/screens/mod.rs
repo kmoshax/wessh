@@ -3,6 +3,7 @@
 mod image;
 pub mod layout;
 pub mod live;
+pub mod onboarding;
 mod video;
 
 pub use image::ImageScreen;

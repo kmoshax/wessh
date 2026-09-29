@@ -2,25 +2,17 @@
 
 use super::super::Frame;
 use super::{description, labeled_slider, percent, section, toggle_section};
-use crate::ui::components::{Chip, Dropdown};
+use crate::ui::components::Chip;
 use crate::ui::icons;
 use crate::ui::theme::spacing;
 use eframe::egui::Ui;
-use wajh_core::assets::OccluderModel;
 use wajh_core::face::FaceRegion;
 
-const OCCLUDERS: [(OccluderModel, &str); 3] = [
-    (OccluderModel::Xseg1, OccluderModel::Xseg1.label()),
-    (OccluderModel::Xseg2, OccluderModel::Xseg2.label()),
-    (OccluderModel::Xseg3, OccluderModel::Xseg3.label()),
-];
-
-/// Keep hands, hair and glasses in front of the face.
+/// Keep hands, hair and glasses in front of the face, with the curated occluder model.
 pub(super) fn occlusion(ui: &mut Ui, frame: &mut Frame<'_>) {
     let settings = &mut *frame.settings;
     toggle_section(ui, icons::BACK_HAND, "Occlusion", &mut settings.occlusion, |ui| {
         description(ui, "Keep hands, hair and glasses that cover the face. Runs one extra model per face.");
-        ui.add(Dropdown::new("Occluder model", &mut settings.occluder_model, &OCCLUDERS).icon(icons::MEMORY));
     });
 }
 

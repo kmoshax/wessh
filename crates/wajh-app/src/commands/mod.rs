@@ -5,7 +5,7 @@ mod cam;
 mod doctor;
 mod image;
 mod models;
-pub mod setup;
+mod setup;
 mod video;
 
 use crate::cli::{Command, Options};

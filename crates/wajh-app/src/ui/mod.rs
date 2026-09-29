@@ -3,7 +3,8 @@
 //!
 //! - [`theme`]: HCT colour scheme, type scale, tokens and the egui style mapping.
 //! - [`components`]: reusable MD3 widgets.
-//! - [`screens`]: the Live / Image / Video destinations.
+//! - [`screens`]: the Live / Image / Video destinations, and the first-run onboarding shown
+//!   instead of them until everything is installed.
 
 mod capture;
 mod components;
@@ -20,6 +21,7 @@ use components::navigation::{RAIL_WIDTH, TOP_APP_BAR_HEIGHT};
 use components::{Chip, IconButton, drop_overlay, navigation_rail, top_app_bar};
 use eframe::egui::{self, CentralPanel, Context, Key, Margin, SidePanel, TopBottomPanel};
 use file_picker::{IMAGE_EXTENSIONS, has_extension};
+use screens::onboarding::{Next, Onboarding};
 use screens::{ImageScreen, LiveScreen, Screen, VideoScreen};
 use std::path::PathBuf;
 use theme::{Brightness, ThemeConfig, spacing};
@@ -42,19 +44,64 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         vsync: false,
         ..Default::default()
     };
-    eframe::run_native(
-        APP_NAME,
-        native,
-        Box::new(move |cc| {
-            let engine = EngineOptions { runtime: options.ort.clone(), device: options.device };
-            let ctx = cc.egui_ctx.clone();
-            let session = LiveSession::spawn(engine.clone(), options.settings(), move || ctx.request_repaint());
-            let ctx = cc.egui_ctx.clone();
-            let jobs = JobRunner::spawn(engine, move || ctx.request_repaint());
-            Ok(Box::new(App::new(&cc.egui_ctx, session, jobs)))
-        }),
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))
+    eframe::run_native(APP_NAME, native, Box::new(move |cc| Ok(Box::new(Shell::new(&cc.egui_ctx, options)))))
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The window: onboarding until everything is installed, then the app. The engine (and so the
+/// models) only loads once the app starts.
+struct Shell {
+    options: Options,
+    onboarding: Option<Box<Onboarding>>,
+    app: Option<Box<App>>,
+    theme: ThemeConfig,
+    /// Design review capture, while onboarding shows (the app takes it over afterwards).
+    capture: Option<capture::Capture>,
+}
+
+impl Shell {
+    fn new(ctx: &Context, options: Options) -> Self {
+        let dev = capture::DevOptions::from_env();
+        let brightness = if dev.light { Brightness::Light } else { Brightness::Dark };
+        let theme = ThemeConfig { brightness, ..ThemeConfig::default() };
+        theme::install_fonts(ctx);
+        theme::apply(ctx, theme);
+        let onboarding = Onboarding::check(ctx, &options, dev.onboarding).map(Box::new);
+        let mut shell = Self { options, onboarding, app: None, theme, capture: None };
+        if shell.onboarding.is_some() {
+            shell.capture = dev.capture;
+        } else {
+            shell.open_app(ctx);
+        }
+        shell
+    }
+
+    /// Initialise the engine and show the app.
+    fn open_app(&mut self, ctx: &Context) {
+        self.onboarding = None;
+        let engine = EngineOptions { runtime: self.options.ort.clone(), device: self.options.device };
+        let repaint = ctx.clone();
+        let session = LiveSession::spawn(engine.clone(), self.options.settings(), move || repaint.request_repaint());
+        let repaint = ctx.clone();
+        let jobs = JobRunner::spawn(engine, move || repaint.request_repaint());
+        self.app = Some(Box::new(App::new(ctx, session, jobs, self.theme)));
+    }
+}
+
+impl eframe::App for Shell {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        if let Some(onboarding) = &mut self.onboarding {
+            if onboarding.ui(ctx) == Next::OpenApp {
+                self.open_app(ctx);
+            } else if let Some(capture) = &mut self.capture {
+                capture.update(ctx, &Phase::Ready);
+            }
+            return;
+        }
+        if let Some(app) = &mut self.app {
+            app.update(ctx, frame);
+        }
+    }
 }
 
 struct App {
@@ -69,12 +116,8 @@ struct App {
 }
 
 impl App {
-    fn new(ctx: &Context, session: LiveSession, jobs: JobRunner) -> Self {
+    fn new(ctx: &Context, session: LiveSession, jobs: JobRunner, theme: ThemeConfig) -> Self {
         let dev = capture::DevOptions::from_env();
-        let brightness = if dev.light { Brightness::Light } else { Brightness::Dark };
-        let theme = ThemeConfig { brightness, ..ThemeConfig::default() };
-        theme::install_fonts(ctx);
-        theme::apply(ctx, theme);
         let mut app = Self {
             session,
             jobs,
@@ -190,7 +233,7 @@ fn backend_chip(ui: &mut egui::Ui, snapshot: &Snapshot) {
     }
 }
 
-impl eframe::App for App {
+impl App {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         let snapshot = self.session.snapshot();
         self.handle_drops(ctx, &snapshot);

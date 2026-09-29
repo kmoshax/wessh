@@ -19,8 +19,9 @@ no Python, no PyTorch and no multi-gigabyte environment to build.
    ```
 
 2. **Set up** the machine. `wajh setup` detects your GPU and driver, installs the matching
-   ONNX Runtime build, the CUDA / cuDNN libraries it needs (NVIDIA only, no CUDA toolkit
-   install required) and the default models:
+   ONNX Runtime build, the CUDA / cuDNN and TensorRT libraries it needs (NVIDIA only, no CUDA
+   toolkit install required) and wajh's curated models. Starting the app without it works too:
+   a first-run screen downloads the same things, with pause and resume:
 
    ```sh
    wajh setup --dry-run   # optional: see what would be downloaded, and how much
@@ -84,8 +85,8 @@ wajh video -s me.jpg -t clip.mp4 -o out.mp4
 wajh cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
 wajh cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
 wajh bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
-wajh models                                       # download the models the options need
-wajh setup                                        # install runtime, CUDA libraries, models
+wajh models                                       # download the curated models
+wajh setup                                        # install runtime, CUDA / TensorRT libraries, models
 wajh doctor                                       # diagnose the installation
 ```
 
@@ -93,7 +94,6 @@ Global options:
 
 | Option                                                  | Meaning                                          |
 | ------------------------------------------------------- | ------------------------------------------------ |
-| `--model inswapper\|hyperswap1a\|hyperswap1b\|hyperswap1c` | swap model (default `hyperswap1a`)            |
 | `--device auto\|tensorrt\|cuda\|cpu`                     | inference backend (default `auto`)               |
 | `--enhance true\|false`                                 | GPEN face restoration (default on)               |
 | `--many-faces`                                          | swap every face, not only the largest            |
@@ -106,9 +106,9 @@ Global options:
 | -------------------------------- | -------------------------------------------------------------------- |
 | `--dry-run`                      | print the plan with download sizes, change nothing                   |
 | `--flavour cpu\|cuda12\|cuda13\|coreml` | override the detected runtime build                            |
-| `--tensorrt`                     | also install TensorRT (NVIDIA; large download, fastest backend)      |
+| `--no-tensorrt`                  | skip TensorRT on NVIDIA (saves a 3.7 GB download; fastest backend)   |
 | `--force`                        | reinstall components that are already present                       |
-| `--no-models`                    | skip the models (they otherwise download on first use)               |
+| `--no-models`                    | skip the models (the app downloads them on first start)              |
 | `--ort-version <x.y.z>`          | ONNX Runtime release to install (default: the tested one)            |
 
 Setup is idempotent (finished components are skipped), downloads resume after interruption,
