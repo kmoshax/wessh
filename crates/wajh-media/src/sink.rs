@@ -26,11 +26,7 @@ impl OutputTarget {
 
     #[must_use]
     pub fn default_for_platform() -> Self {
-        if cfg!(target_os = "linux") {
-            Self::V4l2("/dev/video10".into())
-        } else {
-            Self::Stream("udp://127.0.0.1:27000".into())
-        }
+        if cfg!(target_os = "linux") { Self::V4l2("/dev/video10".into()) } else { Self::Stream("udp://127.0.0.1:27000".into()) }
     }
 
     #[must_use]

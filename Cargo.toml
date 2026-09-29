@@ -12,7 +12,7 @@ repository = "https://github.com/kmosha/wajh"
 wajh-core = { path = "crates/wajh-core" }
 wajh-media = { path = "crates/wajh-media" }
 # ONNX Runtime is loaded at runtime, so the binary stays small and GPU support is a drop-in.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-28", "cuda", "tensorrt", "lax-feature-matching"] }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-28", "cuda", "tensorrt", "coreml", "lax-feature-matching"] }
 eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rayon = "1.10"

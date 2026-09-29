@@ -8,11 +8,13 @@ pub type Landmarks5 = [Point; 5];
 pub struct Affine(pub [f32; 6]);
 
 impl Affine {
+    #[must_use]
     pub fn apply(&self, p: Point) -> Point {
         let m = &self.0;
         [m[0] * p[0] + m[1] * p[1] + m[2], m[3] * p[0] + m[4] * p[1] + m[5]]
     }
 
+    #[must_use]
     pub fn invert(&self) -> Affine {
         let [a, b, tx, c, d, ty] = self.0;
         let det = a * d - b * c;
@@ -23,6 +25,7 @@ impl Affine {
 
     /// Least-squares similarity transform (rotation + uniform scale + translation) from `src` to `dst`.
     /// Equivalent to OpenCV's `estimateAffinePartial2D` without outlier rejection.
+    #[must_use]
     pub fn similarity(src: &[Point], dst: &[Point]) -> Affine {
         let n = src.len() as f32;
         let (mut msx, mut msy, mut mdx, mut mdy) = (0.0, 0.0, 0.0, 0.0);
@@ -52,8 +55,37 @@ impl Affine {
     }
 
     /// Uniform scale factor of the transform.
+    #[must_use]
     pub fn scale(&self) -> f32 {
         (self.0[0] * self.0[0] + self.0[3] * self.0[3]).sqrt()
+    }
+}
+
+/// Axis-aligned pixel rectangle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Rect {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Rect {
+    /// The whole of a `width`×`height` image.
+    #[must_use]
+    pub const fn full(width: usize, height: usize) -> Self {
+        Self { x: 0, y: 0, width, height }
+    }
+
+    /// Square of side `side` centred on `center`, shifted and then clipped to fit a
+    /// `width`×`height` image. `None` if nothing of it is inside.
+    #[must_use]
+    pub fn square_around(center: Point, side: f32, width: usize, height: usize) -> Option<Self> {
+        let side = side.round().max(1.0);
+        let clamp_origin = |c: f32, len: usize| (c - side / 2.0).round().clamp(0.0, (len as f32 - side).max(0.0)) as usize;
+        let (x, y) = (clamp_origin(center[0], width), clamp_origin(center[1], height));
+        let rect = Self { x, y, width: (side as usize).min(width - x.min(width)), height: (side as usize).min(height - y.min(height)) };
+        (rect.width > 0 && rect.height > 0).then_some(rect)
     }
 }
 
@@ -65,6 +97,7 @@ pub enum Template {
 }
 
 impl Template {
+    #[must_use]
     pub fn points(self) -> Landmarks5 {
         match self {
             Template::Arcface112 => [
@@ -85,6 +118,7 @@ impl Template {
     }
 
     /// Transform mapping frame coordinates onto a `size`x`size` aligned crop.
+    #[must_use]
     pub fn align(self, landmarks: &Landmarks5, size: usize) -> Affine {
         let dst = self.points().map(|p| [p[0] * size as f32, p[1] * size as f32]);
         Affine::similarity(landmarks, &dst)
@@ -94,6 +128,15 @@ impl Template {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn square_is_shifted_inside_the_image() {
+        assert_eq!(Rect::square_around([50.0, 50.0], 20.0, 100, 100), Some(Rect { x: 40, y: 40, width: 20, height: 20 }));
+        assert_eq!(Rect::square_around([5.0, 95.0], 20.0, 100, 100), Some(Rect { x: 0, y: 80, width: 20, height: 20 }));
+        // Larger than the image: clipped.
+        assert_eq!(Rect::square_around([50.0, 20.0], 300.0, 100, 40), Some(Rect { x: 0, y: 0, width: 100, height: 40 }));
+        assert_eq!(Rect::square_around([5.0, 5.0], 10.0, 0, 0), None);
+    }
 
     #[test]
     fn similarity_recovers_known_transform() {

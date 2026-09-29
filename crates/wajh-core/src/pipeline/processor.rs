@@ -1,4 +1,5 @@
 use super::pixel_boost::{self, Swapped};
+use super::tracker::{FaceTracker, TrackingDetector};
 use super::{FaceOrder, FaceSmoother, Settings, Stats, select};
 use crate::face::masker::{MASK_SIZE, compose};
 use crate::face::{AlignedCrop, Detector, Embedding, Enhancer, Face, Masker, Recognizer, Swapper};
@@ -28,6 +29,7 @@ pub struct Processor {
     /// Only faces like this one are swapped, when set.
     reference: Option<Embedding>,
     smoother: FaceSmoother,
+    tracker: FaceTracker,
     /// Most recently used first.
     masks: VecDeque<(MaskKey, Vec<f32>)>,
     last_frame: Option<Instant>,
@@ -46,6 +48,7 @@ impl Processor {
             condition: None,
             reference: None,
             smoother: FaceSmoother::default(),
+            tracker: FaceTracker::default(),
             masks: VecDeque::with_capacity(MASK_CACHE),
             last_frame: None,
         })
@@ -103,6 +106,8 @@ impl Processor {
             self.condition = self.identity.as_ref().map(|id| swapper.condition(id));
             self.swapper = Some(swapper);
         }
+        self.detector.prepare(settings.detector_size)?;
+        self.detector.prepare(self.tracker.config.region_size)?;
         if settings.enhance && self.enhancer.is_none() {
             self.enhancer = Some(Enhancer::new(&self.engine)?);
         }
@@ -173,7 +178,12 @@ impl Processor {
 
     fn detect(&mut self, frame: &Frame, settings: &Settings, live: bool) -> Result<Vec<Face>> {
         self.detector.input_size = settings.detector_size;
-        let faces = self.detector.detect(frame)?;
+        let faces = if live {
+            let mut source = TrackingDetector { detector: &mut self.detector, region_size: self.tracker.config.region_size };
+            self.tracker.detect(&mut source, frame)?.0
+        } else {
+            self.detector.detect(frame)?
+        };
         let similarities = match &self.reference {
             Some(reference) => Some(
                 faces.iter().map(|f| Ok(self.recognizer.embed(frame, &f.landmarks)?.similarity(reference))).collect::<Result<Vec<_>>>()?,
@@ -181,6 +191,8 @@ impl Processor {
             None => None,
         };
         let mut faces = select(faces, similarities.as_deref(), 1.0 - settings.reference_distance, settings.face_order, settings.many_faces);
+        // Follow the raw (unsmoothed) positions of the faces being swapped.
+        self.tracker.track(if live { &faces } else { &[] });
         let now = Instant::now();
         let dt = self.last_frame.map_or(1.0 / 30.0, |t| (now - t).as_secs_f32());
         self.last_frame = Some(now);

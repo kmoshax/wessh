@@ -19,6 +19,9 @@ pub enum Error {
     #[error("model {model} returned unexpected output: {detail}")]
     UnexpectedOutput { model: &'static str, detail: String },
 
+    #[error("model {model} has a dynamic shape: {detail}")]
+    DynamicShape { model: &'static str, detail: String },
+
     #[error("download of {url} failed: {reason}")]
     Download { url: String, reason: String },
 

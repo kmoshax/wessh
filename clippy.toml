@@ -1,1 +1,1 @@
-doc-valid-idents = ["TensorRT", "PyPI", "CoreML", "DirectML", "cuDNN", "cuBLAS", "cuFFT", "cuRAND", "NVENC", "VideoToolbox", "ONNX", ".."]
+doc-valid-idents = ["TensorRT", "PyPI", "CoreML", "DirectML", "cuDNN", "cuBLAS", "cuFFT", "cuRAND", "NVENC", "VideoToolbox", "ONNX", "OpenCV", "ArcFace", "InsightFace", "FaceFusion", "HyperSwap", ".."]

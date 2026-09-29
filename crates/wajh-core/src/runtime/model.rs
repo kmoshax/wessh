@@ -63,3 +63,12 @@ impl Model {
         Ok(self.run(inputs)?.swap_remove(0))
     }
 }
+
+impl Drop for Model {
+    fn drop(&mut self) {
+        // Flush the trace requested with `WAJH_ORT_PROFILE` (see `Engine`).
+        if std::env::var_os("WAJH_ORT_PROFILE").is_some() {
+            let _ = self.session.end_profiling();
+        }
+    }
+}
