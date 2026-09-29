@@ -1,3 +1,4 @@
+use crate::commands::setup::{platform::Flavour, sources::ORT_VERSION};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use wajh_core::assets::SwapModel;
@@ -92,6 +93,32 @@ pub enum Command {
     },
     /// Download the models the chosen options need.
     Models,
+    /// Install the ONNX Runtime build for this GPU, its CUDA libraries and the default models.
+    Setup(SetupArgs),
+    /// Check the installation and explain how to fix what is missing.
+    Doctor,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SetupArgs {
+    /// Show what would be downloaded, with sizes, without changing anything.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Runtime build to install [default: chosen from the GPU and driver].
+    #[arg(long, value_enum)]
+    pub flavour: Option<Flavour>,
+    /// Also install TensorRT (NVIDIA only; large download, fastest inference).
+    #[arg(long)]
+    pub tensorrt: bool,
+    /// ONNX Runtime release to install.
+    #[arg(long, default_value = ORT_VERSION)]
+    pub ort_version: String,
+    /// Download and reinstall components even if they are already present.
+    #[arg(long)]
+    pub force: bool,
+    /// Skip the models (they are otherwise fetched on first use).
+    #[arg(long)]
+    pub no_models: bool,
 }
 
 #[derive(Debug, Clone, Args)]
