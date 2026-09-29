@@ -1,13 +1,13 @@
 //! Where frames and the source face come from, and where results go.
 
 use super::super::{Action, Frame, paint_cover};
-use super::{caption, section, switch_row};
-use crate::ui::components::{Button, Chip, CircularProgress, SegmentedButton, TextField, paint};
+use super::{caption, section, section_with, switch_row};
+use crate::ui::components::{Button, Chip, CircularProgress, Dropdown, IconButton, SegmentedButton, TextField, paint};
 use crate::ui::icons;
 use crate::ui::theme::{self, TypeRole, motion, shape, size, spacing};
-use eframe::egui::{Align2, CursorIcon, Key, Label, Sense, Stroke, StrokeKind, TextureHandle, Ui, Vec2, pos2, vec2};
+use eframe::egui::{self, Align2, CursorIcon, Key, Label, Margin, Sense, Stroke, StrokeKind, TextureHandle, Ui, Vec2, pos2, vec2};
 use std::path::PathBuf;
-use wajh_media::OutputTarget;
+use wajh_media::{DEFAULT_LOOPBACK, DEFAULT_STREAM, LOOPBACK_MODPROBE, LoopbackStatus, OutputTarget, VideoDevice};
 
 // ── Source face ────────────────────────────────────────────────────────────────
 
@@ -111,6 +111,68 @@ fn path_field(ui: &mut Ui, frame: &mut Frame<'_>) {
     }
 }
 
+// ── Devices ────────────────────────────────────────────────────────────────────
+
+/// A dropdown entry: a discovered device or free text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Choice {
+    Listed(usize),
+    Custom,
+}
+
+const CUSTOM_LABEL: &str = "Custom…";
+
+/// A dropdown of `options` (id, label) plus "Custom…", which reveals a text field.
+/// `custom` remembers that the user chose to type the value.
+fn device_picker(ui: &mut Ui, label: &str, icon: char, options: &[(String, String)], value: &mut String, custom: &mut bool, hint: &str) {
+    let entries: Vec<(Choice, &str)> = options
+        .iter()
+        .enumerate()
+        .map(|(i, (_, label))| (Choice::Listed(i), label.as_str()))
+        .chain(std::iter::once((Choice::Custom, CUSTOM_LABEL)))
+        .collect();
+    let listed = options.iter().position(|(id, _)| id == value.trim());
+    let mut choice = match listed {
+        Some(i) if !*custom => Choice::Listed(i),
+        _ => Choice::Custom,
+    };
+    if ui.add(Dropdown::new(label, &mut choice, &entries).icon(icon)).changed() {
+        match choice {
+            Choice::Listed(i) => {
+                value.clone_from(&options[i].0);
+                *custom = false;
+            }
+            Choice::Custom => *custom = true,
+        }
+    }
+    if choice == Choice::Custom {
+        ui.add(TextField::new("Custom", value).hint(hint));
+    }
+}
+
+/// Dropdown labels: the device name, with its path where names repeat or `with_id` asks for it.
+fn device_options(devices: &[VideoDevice], with_id: bool) -> Vec<(String, String)> {
+    devices
+        .iter()
+        .map(|d| {
+            let repeated = devices.iter().filter(|other| other.name == d.name).count() > 1;
+            let label = if repeated || with_id || d.name.is_empty() { format!("{} · {}", d.name, d.id) } else { d.name.clone() };
+            (d.id.clone(), label.trim_start_matches([' ', '·']).trim().to_owned())
+        })
+        .collect()
+}
+
+/// Rescan button for a section header (a spinner while scanning). Returns whether it was clicked.
+fn refresh_button(ui: &mut Ui, scanning: bool) -> bool {
+    if scanning {
+        ui.add_space(spacing::SM);
+        ui.add(CircularProgress::new(size::ICON_SMALL));
+        false
+    } else {
+        ui.add(IconButton::new(icons::REFRESH, "Look for devices again")).clicked()
+    }
+}
+
 // ── Camera ─────────────────────────────────────────────────────────────────────
 
 const RESOLUTIONS: [((usize, usize), &str); 3] = [((640, 480), "480p"), ((1280, 720), "720p"), ((1920, 1080), "1080p")];
@@ -118,22 +180,40 @@ const FRAME_RATES: [(u32, &str); 3] = [(15, "15"), (30, "30"), (60, "60")];
 
 pub(super) fn camera(ui: &mut Ui, frame: &mut Frame<'_>) {
     let live = frame.is_live();
-    let camera = &mut frame.form.camera;
-    section(ui, icons::VIDEOCAM, "Camera", |ui| {
-        ui.add_enabled_ui(!live, |ui| {
-            ui.add(TextField::new("Device", &mut camera.device).icon(icons::PHOTO_CAMERA));
-            caption(ui, "Resolution");
-            let mut resolution = (camera.width, camera.height);
-            if ui.add(SegmentedButton::new(&mut resolution, &RESOLUTIONS)).changed() {
-                (camera.width, camera.height) = resolution;
-            }
-            caption(ui, "Frame rate");
-            ui.add(SegmentedButton::new(&mut camera.fps, &FRAME_RATES));
-            if live {
-                caption(ui, "Stop the camera to change these");
-            }
-        });
-    });
+    let options = frame.devices.map(|d| device_options(&d.cameras, false)).unwrap_or_default();
+    let scanned = frame.devices.is_some();
+    let scanning = frame.scanning;
+    let mut refresh = false;
+    let form = &mut *frame.form;
+    section_with(
+        ui,
+        icons::VIDEOCAM,
+        "Camera",
+        |ui| refresh = refresh_button(ui, scanning),
+        |ui| {
+            ui.add_enabled_ui(!live, |ui| {
+                let hint = wajh_media::default_camera_device();
+                device_picker(ui, "Device", icons::PHOTO_CAMERA, &options, &mut form.camera.device, &mut form.camera_custom, &hint);
+                if scanned && options.is_empty() {
+                    caption(ui, "No cameras found — type the device instead");
+                }
+                caption(ui, "Resolution");
+                let camera = &mut form.camera;
+                let mut resolution = (camera.width, camera.height);
+                if ui.add(SegmentedButton::new(&mut resolution, &RESOLUTIONS)).changed() {
+                    (camera.width, camera.height) = resolution;
+                }
+                caption(ui, "Frame rate");
+                ui.add(SegmentedButton::new(&mut camera.fps, &FRAME_RATES));
+                if live {
+                    caption(ui, "Stop the camera to change these");
+                }
+            });
+        },
+    );
+    if refresh {
+        frame.actions.push(Action::RefreshDevices);
+    }
 }
 
 // ── Output ─────────────────────────────────────────────────────────────────────
@@ -141,20 +221,98 @@ pub(super) fn camera(ui: &mut Ui, frame: &mut Frame<'_>) {
 pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
     let live = frame.is_live();
     let streaming = live && frame.snapshot.output_active;
+    let loopback = frame.devices.map_or(LoopbackStatus::Unsupported, |d| d.loopback);
+    let mut options = frame.devices.map(|d| device_options(&d.outputs, true)).unwrap_or_default();
+    if loopback == LoopbackStatus::NotLoaded {
+        // The device the modprobe command below creates.
+        options.push((DEFAULT_LOOPBACK.to_owned(), format!("{DEFAULT_LOOPBACK} · needs v4l2loopback")));
+    }
+    options.push((DEFAULT_STREAM.to_owned(), STREAM_LABEL.to_owned()));
+    let scanning = frame.scanning;
     let form = &mut *frame.form;
-    section(ui, icons::CAST, "Output", |ui| {
-        ui.add_enabled_ui(!live, |ui| {
-            let kind = match OutputTarget::parse(form.output_target.trim()) {
-                OutputTarget::V4l2(_) => "Appear as a webcam in other apps",
-                OutputTarget::Stream(_) => "Stream to OBS as a media source",
-            };
-            switch_row(ui, icons::SENSORS, "Virtual camera", kind, &mut form.output_enabled);
-            ui.add_enabled_ui(form.output_enabled, |ui| {
-                ui.add(TextField::new("Target", &mut form.output_target).hint("/dev/video10 or udp://…"));
+    let (mut copied, mut refresh) = (false, false);
+    section_with(
+        ui,
+        icons::CAST,
+        "Output",
+        |ui| refresh = refresh_button(ui, scanning),
+        |ui| {
+            ui.add_enabled_ui(!live, |ui| {
+                let kind = match OutputTarget::parse(form.output_target.trim()) {
+                    OutputTarget::V4l2(_) => "Appear as a webcam in other apps",
+                    OutputTarget::Stream(_) => "Stream to OBS as a media source",
+                };
+                switch_row(ui, icons::SENSORS, "Virtual camera", kind, &mut form.output_enabled);
+                ui.add_enabled_ui(form.output_enabled, |ui| {
+                    device_picker(
+                        ui,
+                        "Target",
+                        icons::CAST,
+                        &options,
+                        &mut form.output_target,
+                        &mut form.output_custom,
+                        "/dev/video10 or udp://…",
+                    );
+                });
             });
-        });
-        if streaming {
-            ui.add(Chip::status("Sending frames", true).icon(icons::GRAPHIC_EQ));
-        }
-    });
+            let wants_loopback = matches!(OutputTarget::parse(form.output_target.trim()), OutputTarget::V4l2(_));
+            if loopback == LoopbackStatus::NotLoaded && wants_loopback {
+                copied = loopback_help(ui);
+            }
+            if streaming {
+                ui.add(Chip::status("Sending frames", true).icon(icons::GRAPHIC_EQ));
+            }
+        },
+    );
+    if copied {
+        frame.actions.push(Action::Notify("Command copied — run it in a terminal, then refresh".into()));
+    }
+    if refresh {
+        frame.actions.push(Action::RefreshDevices);
+    }
+}
+
+/// Dropdown label of the default network stream.
+const STREAM_LABEL: &str = "OBS media source (UDP stream)";
+
+/// Explains how to load v4l2loopback, with the command and a copy button. Returns whether it was copied.
+fn loopback_help(ui: &mut Ui) -> bool {
+    let colors = theme::colors(ui.ctx());
+    let mut copied = false;
+    egui::Frame::new().fill(colors.tertiary_container).corner_radius(shape::MEDIUM).inner_margin(Margin::same(spacing::MD as i8)).show(
+        ui,
+        |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = spacing::SM;
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(size::ICON), Sense::hover());
+                paint::icon(ui.painter(), rect.center(), icons::WARNING, size::ICON, colors.on_tertiary_container, false);
+                ui.label(TypeRole::TitleSmall.rich("v4l2loopback isn't loaded", colors.on_tertiary_container));
+            });
+            ui.add_space(spacing::XS);
+            let text = "Other apps can only see wajh as a webcam once the virtual camera driver is loaded. Run:";
+            ui.add(Label::new(TypeRole::BodyMedium.rich(text, colors.on_tertiary_container)).wrap());
+            ui.add_space(spacing::XS);
+            egui::Frame::new()
+                .fill(colors.surface_container_lowest)
+                .corner_radius(shape::SMALL)
+                .inner_margin(Margin::same(spacing::SM as i8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                        let text_width = ui.available_width() - size::TARGET;
+                        ui.allocate_ui(vec2(text_width, 0.0), |ui| {
+                            ui.add(Label::new(TypeRole::BodySmall.rich(LOOPBACK_MODPROBE, colors.on_surface).monospace()).wrap());
+                        });
+                        if ui.add(IconButton::new(icons::CONTENT_COPY, "Copy command")).clicked() {
+                            ui.ctx().copy_text(LOOPBACK_MODPROBE.to_owned());
+                            copied = true;
+                        }
+                    });
+                });
+            ui.add_space(spacing::XS);
+            ui.label(TypeRole::BodySmall.rich("Or pick the OBS media source target instead.", colors.on_tertiary_container));
+        },
+    );
+    copied
 }

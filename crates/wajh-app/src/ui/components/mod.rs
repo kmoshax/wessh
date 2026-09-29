@@ -7,6 +7,7 @@
 pub mod button;
 pub mod card;
 pub mod chip;
+pub mod compare;
 pub mod fab;
 pub mod feedback;
 pub mod field;
@@ -21,7 +22,7 @@ pub use button::{Button, IconButton};
 pub use card::Card;
 pub use chip::Chip;
 pub use fab::{ExtendedFab, FabColor};
-pub use feedback::{CircularProgress, Snackbar, drop_overlay, empty_state};
+pub use feedback::{CircularProgress, LinearProgress, Snackbar, drop_overlay, empty_state};
 pub use field::{Dropdown, TextField};
 pub use list_item::ListItem;
 pub use navigation::{Destination, navigation_rail, top_app_bar};

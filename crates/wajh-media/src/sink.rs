@@ -4,6 +4,11 @@ use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use wajh_core::Frame;
 
+/// The v4l2loopback device created by [`crate::LOOPBACK_MODPROBE`] (`video_nr=10`).
+pub const DEFAULT_LOOPBACK: &str = "/dev/video10";
+/// A local UDP MPEG-TS stream that OBS can add as a media source.
+pub const DEFAULT_STREAM: &str = "udp://127.0.0.1:27000";
+
 /// Where live output goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutputTarget {
@@ -26,7 +31,7 @@ impl OutputTarget {
 
     #[must_use]
     pub fn default_for_platform() -> Self {
-        if cfg!(target_os = "linux") { Self::V4l2("/dev/video10".into()) } else { Self::Stream("udp://127.0.0.1:27000".into()) }
+        if cfg!(target_os = "linux") { Self::V4l2(DEFAULT_LOOPBACK.into()) } else { Self::Stream(DEFAULT_STREAM.into()) }
     }
 
     #[must_use]

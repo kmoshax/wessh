@@ -10,6 +10,7 @@ use crossbeam_channel::Sender;
 use state::Shared;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use wajh_core::{Device, Settings};
 use wajh_media::{CameraConfig, OutputTarget};
 
@@ -26,10 +27,22 @@ enum Command {
     Stop,
 }
 
-/// Handle to the worker thread. Dropping it shuts the worker down.
+/// Handle to the worker thread. Dropping it shuts the worker down and waits for it, so GPU
+/// resources are released before the process exits (CUDA aborts otherwise).
 pub struct LiveSession {
     commands: Sender<Command>,
     shared: Arc<Shared>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl Drop for LiveSession {
+    fn drop(&mut self) {
+        // Disconnect the command channel so the worker's loop ends, then wait for it.
+        drop(std::mem::replace(&mut self.commands, crossbeam_channel::unbounded().0));
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 impl LiveSession {
@@ -38,11 +51,11 @@ impl LiveSession {
         let (commands, inbox) = crossbeam_channel::unbounded();
         let shared = Arc::new(Shared::new(settings));
         let worker_shared = shared.clone();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("live".into())
             .spawn(move || worker::run(&engine, &worker_shared, &inbox, &repaint))
             .expect("spawning the live worker thread");
-        Self { commands, shared }
+        Self { commands, shared, worker: Some(worker) }
     }
 
     pub fn set_source(&self, path: PathBuf) {

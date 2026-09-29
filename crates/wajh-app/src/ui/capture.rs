@@ -6,6 +6,10 @@
 //! - `WAJH_UI_THEME=light|dark`: start in the given brightness.
 //! - `WAJH_UI_SCREEN=live|image|video`: start on the given destination.
 //! - `WAJH_UI_SOURCE=<image>`: preload a source face.
+//! - `WAJH_UI_TARGET=<file>`: preload the photo (Image screen) or video (Video screen) to swap.
+//! - `WAJH_UI_OUTPUT=<file>`: where the Video screen writes.
+//! - `WAJH_UI_RENDER=1`: start rendering the video as soon as it and the face are ready.
+//! - `WAJH_UI_LOOPBACK=missing`: show the Live screen as if v4l2loopback were not loaded.
 
 use super::screens::Screen;
 use crate::live::Phase;
@@ -22,6 +26,10 @@ pub struct DevOptions {
     pub light: bool,
     pub screen: Screen,
     pub source: Option<PathBuf>,
+    pub target: Option<PathBuf>,
+    pub output: Option<PathBuf>,
+    pub render: bool,
+    pub loopback_missing: bool,
 }
 
 impl DevOptions {
@@ -44,6 +52,10 @@ impl DevOptions {
             light: var("WAJH_UI_THEME") == "light",
             screen,
             source: std::env::var_os("WAJH_UI_SOURCE").map(PathBuf::from),
+            target: std::env::var_os("WAJH_UI_TARGET").map(PathBuf::from),
+            output: std::env::var_os("WAJH_UI_OUTPUT").map(PathBuf::from),
+            render: var("WAJH_UI_RENDER") == "1",
+            loopback_missing: var("WAJH_UI_LOOPBACK") == "missing",
         }
     }
 }

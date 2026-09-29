@@ -54,6 +54,66 @@ impl Widget for CircularProgress {
     }
 }
 
+/// Thickness of the linear indicator's track.
+const LINEAR_HEIGHT: f32 = 4.0;
+/// Gap between the active indicator and the track (MD3 2024).
+const LINEAR_GAP: f32 = 4.0;
+/// Seconds per sweep of the indeterminate linear indicator.
+const LINEAR_CYCLE: f64 = 1.8;
+/// How far the tail of the indeterminate bar trails its head, as a fraction of the cycle.
+const LINEAR_TAIL_LAG: f32 = 0.3;
+
+/// MD3 linear progress indicator: determinate with a fraction, indeterminate without.
+#[must_use = "add it with `ui.add(...)`"]
+pub struct LinearProgress {
+    fraction: Option<f32>,
+}
+
+impl LinearProgress {
+    /// Determinate at `fraction` (`0..=1`).
+    pub fn determinate(fraction: f32) -> Self {
+        Self { fraction: Some(fraction.clamp(0.0, 1.0)) }
+    }
+
+    /// Indeterminate (animated) indicator.
+    pub fn indeterminate() -> Self {
+        Self { fraction: None }
+    }
+}
+
+impl Widget for LinearProgress {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let colors = theme::colors(ui.ctx());
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), LINEAR_HEIGHT), Sense::hover());
+        let (start, end) = if let Some(fraction) = self.fraction {
+            (0.0, ui.ctx().animate_value_with_time(response.id.with("fraction"), fraction, motion::MEDIUM_2))
+        } else {
+            let phase = (ui.input(|i| i.time) / LINEAR_CYCLE).fract() as f32;
+            let head = motion::standard((phase / (1.0 - LINEAR_TAIL_LAG)).min(1.0));
+            let tail = motion::standard(((phase - LINEAR_TAIL_LAG) / (1.0 - LINEAR_TAIL_LAG)).max(0.0));
+            ui.ctx().request_repaint();
+            (tail, head)
+        };
+        let painter = ui.painter();
+        let radius = shape::full(LINEAR_HEIGHT);
+        let x = |t: f32| rect.left() + rect.width() * t;
+        let segment = |from: f32, to: f32, color| {
+            if to - from > 0.0 {
+                painter.rect_filled(Rect::from_x_y_ranges(from..=to, rect.y_range()), radius, color);
+            }
+        };
+        let (bar_left, bar_right) = (x(start), x(end));
+        segment(rect.left(), bar_left - LINEAR_GAP, colors.secondary_container);
+        segment(bar_left, bar_right, colors.primary);
+        segment(bar_right + LINEAR_GAP, rect.right(), colors.secondary_container);
+        if self.fraction.is_some_and(|f| f < 1.0) {
+            // Stop indicator: marks where the track ends.
+            painter.circle_filled(pos2(rect.right() - LINEAR_HEIGHT / 2.0, rect.center().y), LINEAR_HEIGHT / 2.0, colors.primary);
+        }
+        response
+    }
+}
+
 fn arc_points(center: Pos2, radius: f32, from: f32, to: f32) -> Vec<Pos2> {
     (0..=ARC_SEGMENTS)
         .map(|i| {

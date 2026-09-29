@@ -21,6 +21,17 @@ pub fn text(ui: &Ui, pos: Pos2, align: Align2, role: TypeRole, text: &str, color
     rect
 }
 
+/// [`text`] on one line, cut with an ellipsis where it would exceed `max_width`.
+pub fn text_truncated(ui: &Ui, pos: Pos2, align: Align2, role: TypeRole, text: &str, color: Color32, max_width: f32) -> Rect {
+    let mut job = role.job(text, color, Some(max_width.max(0.0)));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    let rect = align.anchor_size(pos, galley.size());
+    ui.painter().galley(rect.min, galley, color);
+    rect
+}
+
 /// Width `text` occupies in a type role.
 #[must_use]
 pub fn text_width(ui: &Ui, role: TypeRole, text: &str) -> f32 {

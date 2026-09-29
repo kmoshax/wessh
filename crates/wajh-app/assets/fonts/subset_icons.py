@@ -22,6 +22,8 @@ light_mode memory movie photo_camera play_arrow speed stop swap_horiz timer tune
 upload videocam videocam_off crop_free center_focus_strong cast sensors
 face_retouching_natural refresh expand_more palette settings warning frame_person
 back_hand mood sort hd
+save save_as content_copy compare compare_arrows cancel task_alt replay schedule
+aspect_ratio burst_mode folder video_file terminal edit
 """.split()
 
 HERE = pathlib.Path(__file__).parent

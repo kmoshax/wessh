@@ -100,6 +100,7 @@ fn handle(command: Command, processor: &mut Processor, stream: &mut Option<Strea
                 shared.update(|s| {
                     s.has_source = true;
                     s.source_name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                    s.source_path = Some(path.clone());
                     s.notice = None;
                 });
             }
