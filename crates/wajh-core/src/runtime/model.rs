@@ -1,31 +1,32 @@
 use crate::{Error, Result};
 use ort::session::{Session, SessionInputValue};
-use ort::value::Tensor;
+use ort::value::TensorRef;
 use std::borrow::Cow;
 
-/// A named `f32` input tensor.
+/// A named `f32` input tensor, borrowed from the caller so buffers can be reused across frames.
 #[derive(Debug)]
 pub struct Input<'a> {
     pub name: &'a str,
     pub shape: Vec<i64>,
-    pub data: Vec<f32>,
+    pub data: &'a [f32],
 }
 
 impl<'a> Input<'a> {
     /// `1×3×size×size` image tensor.
     #[must_use]
-    pub fn image(name: &'a str, size: usize, data: Vec<f32>) -> Self {
+    pub fn image(name: &'a str, size: usize, data: &'a [f32]) -> Self {
         Self { name, shape: vec![1, 3, size as i64, size as i64], data }
     }
 
     /// `1×N` vector tensor.
     #[must_use]
-    pub fn vector(name: &'a str, data: Vec<f32>) -> Self {
+    pub fn vector(name: &'a str, data: &'a [f32]) -> Self {
         Self { name, shape: vec![1, data.len() as i64], data }
     }
 }
 
-/// A loaded ONNX model with `f32` inputs and outputs.
+/// A loaded ONNX model with `f32` inputs and outputs of any shape (see
+/// [`StaticModel`](super::StaticModel) for fixed-shape models on the hot path).
 pub struct Model {
     session: Session,
     name: &'static str,
@@ -42,12 +43,12 @@ impl Model {
     }
 
     /// Run the model and copy every output out as a flat `Vec<f32>`.
-    pub fn run(&mut self, inputs: Vec<Input<'_>>) -> Result<Vec<Vec<f32>>> {
+    pub fn run(&mut self, inputs: &[Input<'_>]) -> Result<Vec<Vec<f32>>> {
         let values = inputs
-            .into_iter()
+            .iter()
             .map(|input| {
-                let tensor = Tensor::from_array((input.shape, input.data))?;
-                Ok((Cow::Owned(input.name.to_owned()), SessionInputValue::from(tensor)))
+                let tensor = TensorRef::from_array_view((input.shape.as_slice(), input.data))?;
+                Ok((Cow::Borrowed(input.name), SessionInputValue::from(tensor)))
             })
             .collect::<Result<Vec<_>>>()?;
         let outputs = self.session.run(values)?;
@@ -59,7 +60,16 @@ impl Model {
     }
 
     /// Run and return the first output.
-    pub fn run_single(&mut self, inputs: Vec<Input<'_>>) -> Result<Vec<f32>> {
+    pub fn run_single(&mut self, inputs: &[Input<'_>]) -> Result<Vec<f32>> {
         Ok(self.run(inputs)?.swap_remove(0))
+    }
+}
+
+impl Drop for Model {
+    fn drop(&mut self) {
+        // Flush the trace requested with `WAJH_ORT_PROFILE` (see `Engine`).
+        if std::env::var_os("WAJH_ORT_PROFILE").is_some() {
+            let _ = self.session.end_profiling();
+        }
     }
 }

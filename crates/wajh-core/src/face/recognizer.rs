@@ -42,7 +42,7 @@ impl Recognizer {
     pub fn embed(&mut self, frame: &Frame, landmarks: &Landmarks5) -> Result<Embedding> {
         let to_crop = Template::Arcface112.align(landmarks, SIZE);
         let crop = warp_crop(frame, &to_crop, SIZE);
-        let input = Input::image("input", SIZE, to_nchw(&crop, SIZE, Normalization::SIGNED_RGB));
-        Ok(Embedding(self.model.run_single(vec![input])?))
+        let tensor = to_nchw(&crop, SIZE, Normalization::SIGNED_RGB);
+        Ok(Embedding(self.model.run_single(&[Input::image("input", SIZE, &tensor)])?))
     }
 }

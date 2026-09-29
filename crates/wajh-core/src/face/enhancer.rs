@@ -1,31 +1,31 @@
 use super::AlignedCrop;
 use crate::assets;
 use crate::geometry::{Landmarks5, Template};
-use crate::image::{Frame, Normalization, from_nchw, to_nchw, warp_crop};
-use crate::runtime::{Engine, Input, Model};
+use crate::image::{Frame, Normalization, from_nchw, to_nchw_into, warp_crop_into};
+use crate::runtime::{Engine, StaticModel};
 use crate::Result;
 
 /// GPEN-BFR 256 face restoration.
 pub struct Enhancer {
-    model: Model,
-    input_name: String,
+    model: StaticModel,
+    /// Reused aligned-crop buffer.
+    crop: Vec<u8>,
 }
 
 impl Enhancer {
     pub const SIZE: usize = 256;
 
     pub fn new(engine: &Engine) -> Result<Self> {
-        let model = engine.load(&assets::ENHANCER)?;
-        let input_name = model.input_names().first().map_or_else(|| "input".to_owned(), |n| (*n).to_owned());
-        Ok(Self { model, input_name })
+        Ok(Self { model: engine.load_static(&assets::ENHANCER)?, crop: vec![0; Self::SIZE * Self::SIZE * Frame::CHANNELS] })
     }
 
     pub fn enhance(&mut self, frame: &Frame, landmarks: &Landmarks5) -> Result<AlignedCrop> {
         let size = Self::SIZE;
         let norm = Normalization::SIGNED_RGB;
         let to_crop = Template::Arcface128.align(landmarks, size);
-        let input = to_nchw(&warp_crop(frame, &to_crop, size), size, norm);
-        let output = self.model.run_single(vec![Input::image(&self.input_name, size, input)])?;
-        Ok(AlignedCrop { pixels: from_nchw(&output, size, norm), size, to_crop })
+        warp_crop_into(frame, &to_crop, size, &mut self.crop);
+        to_nchw_into(&self.crop, size, norm, self.model.input_mut(0));
+        self.model.run()?;
+        Ok(AlignedCrop { pixels: from_nchw(self.model.output(0), size, norm), size, to_crop })
     }
 }

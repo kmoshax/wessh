@@ -1,6 +1,8 @@
 //! Conversions between BGR crops and NCHW `f32` tensors.
 
-use super::{Frame, sample};
+use super::Frame;
+use crate::geometry::Rect;
+use super::sample::{Bgr, Tap};
 use rayon::prelude::*;
 
 /// `tensor = (pixel / 255 - mean) / std`, optionally swapping BGR → RGB.
@@ -25,15 +27,24 @@ impl Normalization {
 /// BGR crop → NCHW tensor data.
 #[must_use]
 pub fn to_nchw(crop: &[u8], size: usize, norm: Normalization) -> Vec<f32> {
-    let plane = size * size;
-    let (scale, bias) = (1.0 / (255.0 * norm.std), -norm.mean / norm.std);
-    let mut out = vec![0f32; plane * 3];
-    for (i, px) in crop.chunks_exact(3).enumerate() {
-        for c in 0..3 {
-            out[c * plane + i] = f32::from(px[norm.channel(c)]).mul_add(scale, bias);
-        }
-    }
+    let mut out = vec![0f32; size * size * 3];
+    to_nchw_into(crop, size, norm, &mut out);
     out
+}
+
+/// [`to_nchw`] into a caller-owned `3 * size * size` buffer (e.g. a bound model input).
+pub fn to_nchw_into(crop: &[u8], size: usize, norm: Normalization, out: &mut [f32]) {
+    let plane = size * size;
+    assert_eq!(out.len(), plane * 3, "output buffer must hold a 3×size×size tensor");
+    let (scale, bias) = (1.0 / (255.0 * norm.std), -norm.mean / norm.std);
+    let (first, rest) = out.split_at_mut(plane);
+    let (second, third) = rest.split_at_mut(plane);
+    let (pixels, _) = crop.as_chunks::<3>();
+    for (((px, a), b), c) in pixels.iter().zip(first).zip(second).zip(third) {
+        *a = f32::from(px[norm.channel(0)]) * scale + bias;
+        *b = f32::from(px[norm.channel(1)]) * scale + bias;
+        *c = f32::from(px[norm.channel(2)]) * scale + bias;
+    }
 }
 
 /// NCHW tensor data → BGR crop (inverse of [`to_nchw`], clamped to the valid range).
@@ -43,7 +54,7 @@ pub fn from_nchw(tensor: &[f32], size: usize, norm: Normalization) -> Vec<u8> {
     let mut out = vec![0u8; plane * 3];
     for (i, px) in out.chunks_exact_mut(3).enumerate() {
         for (c, value) in px.iter_mut().enumerate() {
-            let v = tensor[norm.channel(c) * plane + i].mul_add(norm.std, norm.mean).clamp(0.0, 1.0);
+            let v = (tensor[norm.channel(c) * plane + i] * norm.std + norm.mean).clamp(0.0, 1.0);
             *value = (v * 255.0 + 0.5) as u8;
         }
     }
@@ -55,13 +66,35 @@ pub fn from_nchw(tensor: &[f32], size: usize, norm: Normalization) -> Vec<u8> {
 /// tensor coordinates back to frame coordinates.
 #[must_use]
 pub fn letterbox_nchw(frame: &Frame, size: usize) -> (Vec<f32>, f32) {
+    let mut out = vec![0f32; size * size * 3];
+    let to_frame = letterbox_nchw_into(frame, size, &mut out);
+    (out, to_frame)
+}
+
+/// [`letterbox_nchw`] into a caller-owned `3 * size * size` buffer; returns the tensor → frame
+/// scale factor.
+pub fn letterbox_nchw_into(frame: &Frame, size: usize, out: &mut [f32]) -> f32 {
+    letterbox_region_nchw_into(frame, Rect::full(frame.width, frame.height), size, out)
+}
+
+/// Letterbox only `region` of `frame` (never upscaling) into a caller-owned `3 * size * size`
+/// buffer. Tensor point `p` maps to frame point `region.origin + p * factor`, where `factor` is
+/// the returned value.
+pub fn letterbox_region_nchw_into(frame: &Frame, region: Rect, size: usize, out: &mut [f32]) -> f32 {
     const MEAN: f32 = 127.5;
     const STD: f32 = 128.0;
-    let scale = (size as f32 / frame.width as f32).min(size as f32 / frame.height as f32).min(1.0);
-    let (width, height) = ((frame.width as f32 * scale) as usize, (frame.height as f32 * scale) as usize);
-    let to_frame = 1.0 / scale;
     let plane = size * size;
-    let mut out = vec![-MEAN / STD; plane * 3];
+    assert_eq!(out.len(), plane * 3, "output buffer must hold a 3×size×size tensor");
+    out.fill(-MEAN / STD);
+    let scale = (size as f32 / region.width as f32).min(size as f32 / region.height as f32).min(1.0);
+    let to_frame = 1.0 / scale;
+    let Some(image) = Bgr::new(&frame.data, frame.width, frame.height) else {
+        return to_frame;
+    };
+    let (width, height) = ((region.width as f32 * scale) as usize, (region.height as f32 * scale) as usize);
+    let (left, top) = (region.x as f32, region.y as f32);
+    // The resize is axis-aligned, so every row shares the same horizontal taps.
+    let column_taps: Vec<Tap> = (0..width).map(|x| Tap::new(left + (x as f32 + 0.5) * to_frame - 0.5, frame.width)).collect();
 
     let (b, rest) = out.split_at_mut(plane);
     let (g, r) = rest.split_at_mut(plane);
@@ -71,16 +104,15 @@ pub fn letterbox_nchw(frame: &Frame, size: usize) -> (Vec<f32>, f32) {
         .take(height)
         .enumerate()
         .for_each(|(y, ((b, g), r))| {
-            let sy = (y as f32 + 0.5).mul_add(to_frame, -0.5);
-            for x in 0..width {
-                let sx = (x as f32 + 0.5).mul_add(to_frame, -0.5);
-                let [pb, pg, pr] = sample::bilinear(&frame.data, frame.width, frame.height, sx, sy);
+            let row_tap = Tap::new(top + (y as f32 + 0.5) * to_frame - 0.5, frame.height);
+            for (x, &column_tap) in column_taps.iter().enumerate() {
+                let [pb, pg, pr] = image.sample_taps(column_tap, row_tap);
                 b[x] = (pb - MEAN) / STD;
                 g[x] = (pg - MEAN) / STD;
                 r[x] = (pr - MEAN) / STD;
             }
         });
-    (out, to_frame)
+    to_frame
 }
 
 #[cfg(test)]

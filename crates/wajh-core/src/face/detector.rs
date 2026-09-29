@@ -1,6 +1,7 @@
 use super::Face;
 use crate::assets;
-use crate::image::{Frame, letterbox_nchw};
+use crate::geometry::Rect;
+use crate::image::{Frame, letterbox_region_nchw_into};
 use crate::runtime::{Engine, Input, Model};
 use crate::{Error, Result};
 
@@ -13,18 +14,30 @@ pub struct Detector {
     model: Model,
     pub input_size: usize,
     pub score_threshold: f32,
+    /// Reused input tensor.
+    tensor: Vec<f32>,
 }
 
 impl Detector {
+    /// Input sizes must be a multiple of the coarsest anchor stride.
+    pub const SIZE_STEP: usize = 32;
+
     pub fn new(engine: &Engine) -> Result<Self> {
-        Ok(Self { model: engine.load(&assets::DETECTOR)?, input_size: 640, score_threshold: 0.5 })
+        Ok(Self { model: engine.load(&assets::DETECTOR)?, input_size: 640, score_threshold: 0.5, tensor: Vec::new() })
     }
 
     /// Detected faces, largest first.
     pub fn detect(&mut self, frame: &Frame) -> Result<Vec<Face>> {
-        let size = self.input_size;
-        let (tensor, to_frame) = letterbox_nchw(frame, size);
-        let outputs = self.model.run(vec![Input::image("input", size, tensor)])?;
+        self.detect_region(frame, Rect::full(frame.width, frame.height), self.input_size)
+    }
+
+    /// Faces inside `region` of `frame` (in frame coordinates), largest first, with the region
+    /// letterboxed into a `size`×`size` input (`size` a multiple of [`Self::SIZE_STEP`]).
+    pub fn detect_region(&mut self, frame: &Frame, region: Rect, size: usize) -> Result<Vec<Face>> {
+        self.tensor.resize(size * size * 3, 0.0);
+        let to_frame = letterbox_region_nchw_into(frame, region, size, &mut self.tensor);
+        let origin = [region.x as f32, region.y as f32];
+        let outputs = self.model.run(&[Input::image("input", size, &self.tensor)])?;
         if outputs.len() != STRIDES.len() * 3 {
             return Err(Error::UnexpectedOutput { model: assets::DETECTOR.name, detail: format!("{} outputs", outputs.len()) });
         }
@@ -39,10 +52,12 @@ impl Detector {
                 let (ax, ay) = (((cell % columns) * stride) as f32, ((cell / columns) * stride) as f32);
                 let d = &boxes[i * 4..i * 4 + 4];
                 let k = &points[i * 10..i * 10 + 10];
+                let to_x = |v: f32| v.mul_add(to_frame, origin[0]);
+                let to_y = |v: f32| v.mul_add(to_frame, origin[1]);
                 faces.push(Face {
-                    bbox: [(ax - d[0] * s), (ay - d[1] * s), (ax + d[2] * s), (ay + d[3] * s)].map(|v| v * to_frame),
+                    bbox: [to_x(ax - d[0] * s), to_y(ay - d[1] * s), to_x(ax + d[2] * s), to_y(ay + d[3] * s)],
                     score,
-                    landmarks: std::array::from_fn(|j| [(ax + k[j * 2] * s) * to_frame, (ay + k[j * 2 + 1] * s) * to_frame]),
+                    landmarks: std::array::from_fn(|j| [to_x(ax + k[j * 2] * s), to_y(ay + k[j * 2 + 1] * s)]),
                 });
             }
         }

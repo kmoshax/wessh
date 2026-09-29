@@ -49,15 +49,28 @@ impl Frame {
     /// RGBA copy for display.
     #[must_use]
     pub fn to_rgba(&self) -> Vec<u8> {
-        let mut out = vec![u8::MAX; self.width * self.height * 4];
-        out.par_chunks_exact_mut(self.width * 4)
-            .zip(self.data.par_chunks_exact(self.width * Self::CHANNELS))
-            .for_each(|(dst_row, src_row)| {
-                for (dst, src) in dst_row.chunks_exact_mut(4).zip(src_row.chunks_exact(Self::CHANNELS)) {
-                    dst[..3].copy_from_slice(&[src[2], src[1], src[0]]);
-                }
-            });
+        let mut out = Vec::new();
+        self.write_rgba(&mut out);
         out
+    }
+
+    /// RGBA copy for display into a reusable buffer (resized as needed).
+    pub fn write_rgba(&self, out: &mut Vec<u8>) {
+        const RGBA: usize = 4;
+        let pixels = self.width * self.height;
+        out.resize(pixels * RGBA, 0);
+        if pixels == 0 {
+            return;
+        }
+        // Rows are split into bands so each rayon task is large enough to amortise scheduling.
+        let band = self.width * self.height.div_ceil(rayon::current_num_threads() * 4).max(1);
+        out.par_chunks_mut(band * RGBA).zip(self.data.par_chunks(band * Self::CHANNELS)).for_each(|(dst, src)| {
+            let (dst, _) = dst.as_chunks_mut::<RGBA>();
+            let (src, _) = src.as_chunks::<{ Self::CHANNELS }>();
+            for (d, &[b, g, r]) in dst.iter_mut().zip(src) {
+                *d = [r, g, b, u8::MAX];
+            }
+        });
     }
 
     /// Flip horizontally in place (selfie view).

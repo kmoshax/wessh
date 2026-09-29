@@ -1,8 +1,8 @@
 use super::{AlignedCrop, Embedding};
 use crate::assets::SwapModel;
 use crate::geometry::{Landmarks5, Template};
-use crate::image::{Frame, Normalization, from_nchw, to_nchw, warp_crop};
-use crate::runtime::{Engine, Input, Model, proto};
+use crate::image::{Frame, Normalization, from_nchw, to_nchw_into, warp_crop_into};
+use crate::runtime::{Engine, StaticModel, proto};
 use crate::{Error, Result};
 use std::path::Path;
 
@@ -10,21 +10,37 @@ const EMBEDDING_LEN: usize = 512;
 
 /// Identity-conditioned face swap network.
 pub struct Swapper {
-    model: Model,
+    model: StaticModel,
+    inputs: InputIndices,
     kind: SwapModel,
     /// inswapper's learned 512×512 projection of the ArcFace embedding.
     embedding_map: Option<Vec<f32>>,
+    /// Reused aligned-crop buffer.
+    crop: Vec<u8>,
+    /// Condition currently in the model's `source` input.
+    bound_condition: Option<Vec<f32>>,
+}
+
+/// Positions of the network's inputs in the bound model.
+#[derive(Clone, Copy, Debug)]
+struct InputIndices {
+    target: usize,
+    source: usize,
 }
 
 impl Swapper {
     pub fn new(engine: &Engine, kind: SwapModel) -> Result<Self> {
         let asset = kind.asset();
-        let model = engine.load(&asset)?;
+        let model = engine.load_static(&asset)?;
+        let index = |name: &str| {
+            model.input_index(name).ok_or_else(|| Error::UnexpectedOutput { model: asset.name, detail: format!("no `{name}` input") })
+        };
+        let inputs = InputIndices { target: index("target")?, source: index("source")? };
         let embedding_map = match kind {
             SwapModel::Inswapper => Some(load_embedding_map(&asset.path())?),
             _ => None,
         };
-        Ok(Self { model, kind, embedding_map })
+        Ok(Self { model, inputs, kind, embedding_map, crop: Vec::new(), bound_condition: None })
     }
 
     #[must_use]
@@ -58,9 +74,16 @@ impl Swapper {
         let size = self.kind.resolution();
         let norm = self.normalization();
         let to_crop = Template::Arcface128.align(landmarks, size);
-        let target = to_nchw(&warp_crop(frame, &to_crop, size), size, norm);
-        let output = self.model.run_single(vec![Input::image("target", size, target), Input::vector("source", condition.to_vec())])?;
-        Ok(AlignedCrop { pixels: from_nchw(&output, size, norm), size, to_crop })
+        self.crop.resize(size * size * Frame::CHANNELS, 0);
+        warp_crop_into(frame, &to_crop, size, &mut self.crop);
+        to_nchw_into(&self.crop, size, norm, self.model.input_mut(self.inputs.target));
+        // The identity rarely changes: only re-upload it when it does.
+        if self.bound_condition.as_deref() != Some(condition) {
+            self.model.input_mut(self.inputs.source).copy_from_slice(condition);
+            self.bound_condition = Some(condition.to_vec());
+        }
+        self.model.run()?;
+        Ok(AlignedCrop { pixels: from_nchw(self.model.output(0), size, norm), size, to_crop })
     }
 }
 

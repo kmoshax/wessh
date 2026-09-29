@@ -1,3 +1,4 @@
+use super::binding::{Placement, StaticModel};
 use super::{Model, locate};
 use crate::assets::{Asset, data_dir};
 use crate::{Error, Result};
@@ -5,6 +6,9 @@ use ort::ep::{CUDA, ExecutionProviderDispatch, TensorRT, cuda::ConvAlgorithmSear
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use std::path::Path;
+
+/// Runs made before a static model is handed out: cuDNN autotuning, then CUDA graph capture.
+const WARMUP_RUNS: usize = 3;
 
 /// Requested inference backend.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -79,23 +83,66 @@ impl Engine {
     /// Load `asset` (downloading it if needed) with this engine's execution providers.
     pub fn load(&self, asset: &Asset) -> Result<Model> {
         let path = asset.ensure()?;
-        let session = self.session(&path).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
+        let session = self.session(&path, false).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
         Ok(Model::new(session, asset.name))
     }
 
-    fn session(&self, path: &Path) -> ort::Result<Session> {
+    /// Load a model whose inputs and outputs all have fixed shapes, with pre-allocated bound
+    /// buffers and — on CUDA / TensorRT — a CUDA graph when the network can be captured.
+    ///
+    /// The model is warmed up before it is returned, so the first frame is not slow. Capture
+    /// failures (a node that falls back to the CPU, for instance) surface during the warm-up and
+    /// the model is reloaded without a graph.
+    pub fn load_static(&self, asset: &Asset) -> Result<StaticModel> {
+        let path = asset.ensure()?;
+        let load = |cuda_graph: bool| -> Result<StaticModel> {
+            let session = self.session(&path, cuda_graph).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
+            let mut model = StaticModel::new(session, asset.name, self.placement())?;
+            for _ in 0..WARMUP_RUNS {
+                model.run()?;
+            }
+            Ok(model)
+        };
+        if self.cuda_graphs() {
+            match load(true) {
+                Ok(model) => return Ok(model),
+                Err(e) => eprintln!("{}: CUDA graph unavailable ({e}); running without", asset.name),
+            }
+        }
+        load(false)
+    }
+
+    const fn placement(&self) -> Placement {
+        match self.backend {
+            Backend::Cpu => Placement::Host,
+            Backend::Cuda | Backend::TensorRt => Placement::Device,
+        }
+    }
+
+    /// CUDA graphs are used on GPU backends unless `WAJH_CUDA_GRAPH=0`.
+    fn cuda_graphs(&self) -> bool {
+        self.backend != Backend::Cpu && std::env::var("WAJH_CUDA_GRAPH").map_or(true, |v| v != "0")
+    }
+
+    fn session(&self, path: &Path, cuda_graph: bool) -> ort::Result<Session> {
         let gpu = self.backend != Backend::Cpu;
-        Session::builder()?
+        let mut builder = Session::builder()?;
+        // `WAJH_ORT_PROFILE=<dir>` writes one ONNX Runtime trace per model (chrome://tracing).
+        if let Some(dir) = std::env::var_os("WAJH_ORT_PROFILE") {
+            let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            builder = builder.with_profiling(Path::new(&dir).join(stem)).map_err(ort::Error::<()>::from)?;
+        }
+        builder
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(ort::Error::<()>::from)?
             .with_intra_threads(if gpu { 1 } else { self.cpu_threads })
             .map_err(ort::Error::<()>::from)?
-            .with_execution_providers(self.execution_providers())
+            .with_execution_providers(self.execution_providers(cuda_graph))
             .map_err(ort::Error::<()>::from)?
             .commit_from_file(path)
     }
 
-    fn execution_providers(&self) -> Vec<ExecutionProviderDispatch> {
+    fn execution_providers(&self, cuda_graph: bool) -> Vec<ExecutionProviderDispatch> {
         let cache = data_dir().join("trt_cache");
         let tensorrt = || {
             let _ = std::fs::create_dir_all(&cache);
@@ -106,13 +153,16 @@ impl Engine {
                 .with_engine_cache_path(&cache)
                 .with_timing_cache(true)
                 .with_timing_cache_path(&cache)
+                .with_cuda_graph(cuda_graph)
                 .build()
         };
         let cuda = || {
+            // NHWC layout and conv+bias fusion were both measured slower on inswapper (fp16, sm_89).
             CUDA::default()
                 .with_conv_algorithm_search(ConvAlgorithmSearch::Exhaustive)
                 .with_conv_max_workspace(true)
                 .with_tf32(true)
+                .with_cuda_graph(cuda_graph)
                 .build()
         };
         match self.backend {

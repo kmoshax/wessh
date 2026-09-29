@@ -11,5 +11,5 @@ mod warp;
 pub use blend::paste_back;
 pub use frame::Frame;
 pub use mask::{Padding, box_mask, gaussian_blur};
-pub use tensor::{Normalization, from_nchw, letterbox_nchw, to_nchw};
-pub use warp::warp_crop;
+pub use tensor::{Normalization, from_nchw, letterbox_nchw, letterbox_nchw_into, letterbox_region_nchw_into, to_nchw, to_nchw_into};
+pub use warp::{warp_crop, warp_crop_into};

@@ -89,6 +89,9 @@ pub enum Command {
         target: PathBuf,
         #[arg(short = 'n', long, default_value_t = 100)]
         iterations: usize,
+        /// Also print per-stage p50/p95 and a CPU-kernel breakdown at 1080p.
+        #[arg(long)]
+        profile: bool,
     },
     /// Download the models the chosen options need.
     Models,

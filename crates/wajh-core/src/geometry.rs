@@ -57,6 +57,34 @@ impl Affine {
     }
 }
 
+/// Axis-aligned pixel rectangle.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Rect {
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Rect {
+    /// The whole of a `width`×`height` image.
+    #[must_use]
+    pub const fn full(width: usize, height: usize) -> Self {
+        Self { x: 0, y: 0, width, height }
+    }
+
+    /// Square of side `side` centred on `center`, shifted and then clipped to fit a
+    /// `width`×`height` image. `None` if nothing of it is inside.
+    #[must_use]
+    pub fn square_around(center: Point, side: f32, width: usize, height: usize) -> Option<Self> {
+        let side = side.round().max(1.0);
+        let clamp_origin = |c: f32, len: usize| (c - side / 2.0).round().clamp(0.0, (len as f32 - side).max(0.0)) as usize;
+        let (x, y) = (clamp_origin(center[0], width), clamp_origin(center[1], height));
+        let rect = Self { x, y, width: (side as usize).min(width - x.min(width)), height: (side as usize).min(height - y.min(height)) };
+        (rect.width > 0 && rect.height > 0).then_some(rect)
+    }
+}
+
 /// Normalized 5-point alignment templates (from InsightFace / FaceFusion).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
@@ -94,6 +122,15 @@ impl Template {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn square_is_shifted_inside_the_image() {
+        assert_eq!(Rect::square_around([50.0, 50.0], 20.0, 100, 100), Some(Rect { x: 40, y: 40, width: 20, height: 20 }));
+        assert_eq!(Rect::square_around([5.0, 95.0], 20.0, 100, 100), Some(Rect { x: 0, y: 80, width: 20, height: 20 }));
+        // Larger than the image: clipped.
+        assert_eq!(Rect::square_around([50.0, 20.0], 300.0, 100, 40), Some(Rect { x: 0, y: 0, width: 100, height: 40 }));
+        assert_eq!(Rect::square_around([5.0, 5.0], 10.0, 0, 0), None);
+    }
 
     #[test]
     fn similarity_recovers_known_transform() {
