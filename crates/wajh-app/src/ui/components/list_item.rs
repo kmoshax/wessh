@@ -45,8 +45,8 @@ impl<'a> ListItem<'a> {
         let width = ui.available_width();
         let text_left = if self.icon.is_some() { size::ICON + LEADING_GAP } else { 0.0 };
         let text_width = (width - text_left - TRAILING_WIDTH).max(0.0);
-        let headline_color = paint::content(colors.on_surface, enabled);
-        let supporting_color = paint::content(colors.on_surface_variant, enabled);
+        let headline_color = colors.on_surface;
+        let supporting_color = colors.on_surface_variant;
         let headline = ui.fonts_mut(|f| f.layout_job(TypeRole::BodyLarge.job(self.headline, headline_color, Some(text_width))));
         let supporting =
             self.supporting.map(|text| ui.fonts_mut(|f| f.layout_job(TypeRole::BodyMedium.job(text, supporting_color, Some(text_width)))));

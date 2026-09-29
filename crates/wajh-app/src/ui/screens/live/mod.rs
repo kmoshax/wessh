@@ -47,6 +47,8 @@ pub struct Frame<'a> {
     pub form: &'a mut LiveForm,
     pub preview: Option<&'a TextureHandle>,
     pub source: Option<&'a TextureHandle>,
+    /// A source photo is being processed by the worker.
+    pub source_pending: bool,
     pub intake: Intake,
     pub actions: Vec<Action>,
 }
@@ -59,6 +61,16 @@ impl Frame<'_> {
     }
 }
 
+/// Seconds without feedback after which a source request is assumed finished
+/// (the worker reports repeated identical errors without a visible change).
+const SOURCE_TIMEOUT: f64 = 20.0;
+
+/// A source photo sent to the worker but not yet accepted or rejected.
+struct PendingSource {
+    notice_before: Option<String>,
+    since: f64,
+}
+
 /// State of the Live screen that persists between frames.
 #[derive(Default)]
 pub struct LiveScreen {
@@ -68,6 +80,7 @@ pub struct LiveScreen {
     snackbar: Snackbar,
     last_notice: Option<String>,
     picker: FilePicker,
+    pending_source: Option<PendingSource>,
     /// Modal side sheet open (compact layouts only).
     sheet_open: bool,
 }
@@ -80,7 +93,9 @@ impl LiveScreen {
         }
         if let Some(image) = session.take_source_thumbnail() {
             upload(ctx, &mut self.source, "source", &image);
+            self.pending_source = None;
         }
+        self.settle_pending_source(ctx, snapshot);
         if snapshot.notice != self.last_notice {
             self.last_notice.clone_from(&snapshot.notice);
             if let Some(notice) = &snapshot.notice {
@@ -88,7 +103,27 @@ impl LiveScreen {
             }
         }
         if let Some(path) = self.picker.take() {
-            session.set_source(path);
+            self.request_source(ctx, session, snapshot, path);
+        }
+    }
+
+    /// Send a source photo to the worker and show progress until it answers.
+    pub fn request_source(&mut self, ctx: &Context, session: &LiveSession, snapshot: &Snapshot, path: PathBuf) {
+        session.set_source(path);
+        self.pending_source = Some(PendingSource { notice_before: snapshot.notice.clone(), since: ctx.input(|i| i.time) });
+    }
+
+    /// A new notice means the worker rejected the photo; give up after a timeout otherwise.
+    fn settle_pending_source(&mut self, ctx: &Context, snapshot: &Snapshot) {
+        let now = ctx.input(|i| i.time);
+        let Some(pending) = &mut self.pending_source else { return };
+        if snapshot.phase == Phase::Loading {
+            pending.since = now; // the worker only reads commands once models are loaded
+        }
+        if snapshot.notice != pending.notice_before || now - pending.since > SOURCE_TIMEOUT {
+            self.pending_source = None;
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(SOURCE_TIMEOUT));
         }
     }
 
@@ -106,6 +141,7 @@ impl LiveScreen {
             form: &mut self.form,
             preview: self.preview.as_ref(),
             source: self.source.as_ref(),
+            source_pending: self.pending_source.is_some(),
             intake: Intake::detect(self.picker.is_open()),
             actions: Vec::new(),
         };
@@ -143,13 +179,13 @@ impl LiveScreen {
         }
     }
 
-    fn run(&self, ctx: &Context, session: &LiveSession, snapshot: &Snapshot, action: Action) {
+    fn run(&mut self, ctx: &Context, session: &LiveSession, snapshot: &Snapshot, action: Action) {
         match action {
             Action::PickSource => {
                 let ctx = ctx.clone();
                 self.picker.open(move || ctx.request_repaint());
             }
-            Action::LoadSource(path) => session.set_source(path),
+            Action::LoadSource(path) => self.request_source(ctx, session, snapshot, path),
             Action::ToggleLive => self.toggle_live(session, snapshot),
         }
     }

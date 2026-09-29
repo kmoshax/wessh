@@ -125,7 +125,7 @@ impl Widget for Button<'_> {
             let stroke_color = if enabled { outline } else { paint::container(colors.on_surface, false) };
             painter.rect_stroke(rect, radius, Stroke::new(size::STROKE, stroke_color), StrokeKind::Inside);
         }
-        let content = if enabled { palette.content } else { paint::content(colors.on_surface, false) };
+        let content = if enabled { palette.content } else { colors.on_surface };
         paint::state_layer(ui, &response, rect, radius, content);
         paint::focus_ring(ui, &response, rect, radius, &colors);
 
