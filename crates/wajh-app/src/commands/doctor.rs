@@ -1,14 +1,14 @@
 //! `wajh doctor`: report what is installed and how to fix what isn't.
 
-use super::setup::archive::is_shared_library;
-use super::setup::platform::{self, Os, Target};
-use super::setup::sources;
 use crate::cli::Options;
+use crate::install::archive::is_shared_library;
+use crate::install::platform::{self, Os, Target};
+use crate::install::sources;
 use anyhow::Result;
 use ort::ep::{CUDA, ExecutionProvider, TensorRT};
 use std::fmt::Display;
 use std::path::Path;
-use wajh_core::assets::{self, SwapModel, data_dir};
+use wajh_core::assets::{self, data_dir};
 use wajh_core::runtime::locate;
 use wajh_core::{Device, Engine};
 
@@ -153,16 +153,14 @@ fn check_ffmpeg(target: Target, report: &mut Report) {
 }
 
 fn check_models(options: &Options, report: &mut Report) {
-    let needed = super::models::needed(options);
-    let all = [assets::DETECTOR, assets::RECOGNIZER, assets::ENHANCER].into_iter().chain(SwapModel::ALL.map(SwapModel::asset));
-    let (present, absent): (Vec<_>, Vec<_>) = all.partition(assets::Asset::is_downloaded);
+    let (present, absent): (Vec<_>, Vec<_>) = assets::required(&options.settings()).into_iter().partition(assets::Asset::is_downloaded);
     let names = |list: &[assets::Asset]| list.iter().map(|a| a.name).collect::<Vec<_>>().join(", ");
     row("models", if present.is_empty() { "none downloaded".to_owned() } else { names(&present) });
     if !absent.is_empty() {
         row("not downloaded", names(&absent));
     }
-    if needed.iter().any(|a| !a.is_downloaded()) {
-        report.suggestions.push("models for the current options download on first use; `wajh setup` fetches them now".to_owned());
+    if !absent.is_empty() {
+        report.problems.push("some models are missing: run `wajh setup`, or start the app to download them".to_owned());
     }
 }
 

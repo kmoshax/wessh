@@ -89,6 +89,8 @@ pub enum Index {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Wheel {
     pub package: &'static str,
+    /// Name people know the library by.
+    pub label: &'static str,
     /// Only versions starting with this are compatible (pins the CUDA generation).
     pub versions: &'static str,
     /// File-name prefix of the main library, per `[unix, windows]`; proves it is installed.
@@ -96,34 +98,34 @@ pub struct Wheel {
     index: Index,
 }
 
-const fn wheel(package: &'static str, versions: &'static str, unix: &'static str, windows: &'static str) -> Wheel {
-    Wheel { package, versions, library: [unix, windows], index: Index::PyPi }
+const fn wheel(package: &'static str, label: &'static str, versions: &'static str, unix: &'static str, windows: &'static str) -> Wheel {
+    Wheel { package, label, versions, library: [unix, windows], index: Index::PyPi }
 }
 
 /// The CUDA 13 libraries ONNX Runtime's CUDA provider and cuDNN load.
 const CUDA13: [Wheel; 7] = [
-    wheel("nvidia-cuda-runtime", "13.", "libcudart.so", "cudart64_"),
-    wheel("nvidia-cublas", "13.", "libcublasLt.so", "cublasLt64_"),
-    wheel("nvidia-cufft", "12.", "libcufft.so", "cufft64_"),
-    wheel("nvidia-curand", "10.", "libcurand.so", "curand64_"),
-    wheel("nvidia-cudnn-cu13", "9.", "libcudnn.so", "cudnn64_"),
-    wheel("nvidia-nvjitlink", "13.", "libnvJitLink.so", "nvJitLink_"),
-    wheel("nvidia-cuda-nvrtc", "13.", "libnvrtc.so", "nvrtc64_"),
+    wheel("nvidia-cuda-runtime", "CUDA runtime", "13.", "libcudart.so", "cudart64_"),
+    wheel("nvidia-cublas", "cuBLAS", "13.", "libcublasLt.so", "cublasLt64_"),
+    wheel("nvidia-cufft", "cuFFT", "12.", "libcufft.so", "cufft64_"),
+    wheel("nvidia-curand", "cuRAND", "10.", "libcurand.so", "curand64_"),
+    wheel("nvidia-cudnn-cu13", "cuDNN", "9.", "libcudnn.so", "cudnn64_"),
+    wheel("nvidia-nvjitlink", "nvJitLink", "13.", "libnvJitLink.so", "nvJitLink_"),
+    wheel("nvidia-cuda-nvrtc", "NVRTC", "13.", "libnvrtc.so", "nvrtc64_"),
 ];
 
 const CUDA12: [Wheel; 7] = [
-    wheel("nvidia-cuda-runtime-cu12", "12.", "libcudart.so", "cudart64_"),
-    wheel("nvidia-cublas-cu12", "12.", "libcublasLt.so", "cublasLt64_"),
-    wheel("nvidia-cufft-cu12", "11.", "libcufft.so", "cufft64_"),
-    wheel("nvidia-curand-cu12", "10.", "libcurand.so", "curand64_"),
-    wheel("nvidia-cudnn-cu12", "9.", "libcudnn.so", "cudnn64_"),
-    wheel("nvidia-nvjitlink-cu12", "12.", "libnvJitLink.so", "nvJitLink_"),
-    wheel("nvidia-cuda-nvrtc-cu12", "12.", "libnvrtc.so", "nvrtc64_"),
+    wheel("nvidia-cuda-runtime-cu12", "CUDA runtime", "12.", "libcudart.so", "cudart64_"),
+    wheel("nvidia-cublas-cu12", "cuBLAS", "12.", "libcublasLt.so", "cublasLt64_"),
+    wheel("nvidia-cufft-cu12", "cuFFT", "11.", "libcufft.so", "cufft64_"),
+    wheel("nvidia-curand-cu12", "cuRAND", "10.", "libcurand.so", "curand64_"),
+    wheel("nvidia-cudnn-cu12", "cuDNN", "9.", "libcudnn.so", "cudnn64_"),
+    wheel("nvidia-nvjitlink-cu12", "nvJitLink", "12.", "libnvJitLink.so", "nvJitLink_"),
+    wheel("nvidia-cuda-nvrtc-cu12", "NVRTC", "12.", "libnvrtc.so", "nvrtc64_"),
 ];
 
 /// ONNX Runtime 1.28's TensorRT provider is built against TensorRT 10.
 const fn tensorrt(package: &'static str) -> Wheel {
-    Wheel { package, versions: "10.", library: ["libnvinfer.so", "nvinfer_"], index: Index::Nvidia }
+    Wheel { package, label: "TensorRT", versions: "10.", library: ["libnvinfer.so", "nvinfer_"], index: Index::Nvidia }
 }
 
 /// Wheels needed for a CUDA major version, optionally with TensorRT.
@@ -134,6 +136,12 @@ pub fn cuda_wheels(cuda_major: u32, with_tensorrt: bool) -> Vec<Wheel> {
 }
 
 impl Wheel {
+    /// TensorRT, the optional (and by far the largest) download.
+    #[must_use]
+    pub fn is_tensorrt(&self) -> bool {
+        self.index == Index::Nvidia
+    }
+
     /// Whether this wheel's main library is already in `dir`.
     #[must_use]
     pub fn is_installed(&self, dir: &Path, os: Os) -> bool {

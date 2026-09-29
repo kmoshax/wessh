@@ -2,10 +2,12 @@
 //! NVIDIA's Python wheels (`.whl`, which are zip files). Everything else — headers, static
 //! libraries, Python code — is skipped, and the libraries land flat in one directory.
 
+use super::fetch::Cancelled;
 use anyhow::{Context, Result, bail, ensure};
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Directory names under which archives keep their shared libraries (TensorRT's wheels use
 /// their own package directory instead of `lib/`).
@@ -35,25 +37,27 @@ fn has_extension(name: &str, extension: &str) -> bool {
 }
 
 /// Extract every shared library in `archive` into `dest`; returns the installed file names.
-pub fn extract_libraries(archive: &Path, dest: &Path) -> Result<Vec<String>> {
+/// Stops with [`Cancelled`] between files once `cancel` is set (every file is written whole).
+pub fn extract_libraries(archive: &Path, dest: &Path, cancel: &AtomicBool) -> Result<Vec<String>> {
     std::fs::create_dir_all(dest)?;
     let name = archive.file_name().unwrap_or_default().to_string_lossy();
     let installed = if has_extension(&name, "tgz") || has_extension(&name, "gz") {
-        extract_tar_gz(archive, dest)
+        extract_tar_gz(archive, dest, cancel)
     } else if has_extension(&name, "zip") || has_extension(&name, "whl") {
-        extract_zip(archive, dest)
+        extract_zip(archive, dest, cancel)
     } else {
         bail!("unknown archive format: {}", archive.display())
     }
-    .with_context(|| format!("failed to extract {}", archive.display()))?;
+    .map_err(|e| if e.is::<Cancelled>() { e } else { e.context(format!("failed to extract {}", archive.display())) })?;
     ensure!(!installed.is_empty(), "{} contains no shared libraries", archive.display());
     Ok(installed)
 }
 
-fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<Vec<String>> {
+fn extract_tar_gz(archive: &Path, dest: &Path, cancel: &AtomicBool) -> Result<Vec<String>> {
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(File::open(archive)?));
     let mut installed = Vec::new();
     for entry in tar.entries()? {
+        check(cancel)?;
         let mut entry = entry?;
         let member = entry.path()?.to_string_lossy().replace('\\', "/");
         let Some(name) = library_file_name(&member).map(str::to_owned) else { continue };
@@ -72,10 +76,11 @@ fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<Vec<String>> {
     Ok(installed)
 }
 
-fn extract_zip(archive: &Path, dest: &Path) -> Result<Vec<String>> {
+fn extract_zip(archive: &Path, dest: &Path, cancel: &AtomicBool) -> Result<Vec<String>> {
     let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
     let mut installed = Vec::new();
     for index in 0..zip.len() {
+        check(cancel)?;
         let mut file = zip.by_index(index)?;
         if !file.is_file() {
             continue;
@@ -85,6 +90,10 @@ fn extract_zip(archive: &Path, dest: &Path) -> Result<Vec<String>> {
         installed.push(name);
     }
     Ok(installed)
+}
+
+fn check(cancel: &AtomicBool) -> Result<()> {
+    if cancel.load(Ordering::Relaxed) { Err(Cancelled.into()) } else { Ok(()) }
 }
 
 /// Write via a temporary name so an interrupted extraction never leaves a truncated library.
@@ -164,7 +173,7 @@ mod tests {
         zip.finish().unwrap();
 
         let dest = dir.join("out");
-        assert_eq!(extract_libraries(&wheel, &dest).unwrap(), ["libcudart.so.13"]);
+        assert_eq!(extract_libraries(&wheel, &dest, &AtomicBool::new(false)).unwrap(), ["libcudart.so.13"]);
         assert_eq!(std::fs::read_to_string(dest.join("libcudart.so.13")).unwrap(), "elf");
         assert!(!dest.join("cuda.h").exists());
         std::fs::remove_dir_all(dir).unwrap();
@@ -190,7 +199,7 @@ mod tests {
         tar.into_inner().unwrap().finish().unwrap();
 
         let dest = dir.join("out");
-        let installed = extract_libraries(&archive, &dest).unwrap();
+        let installed = extract_libraries(&archive, &dest, &AtomicBool::new(false)).unwrap();
         assert_eq!(installed, ["libonnxruntime.so.1.28.2", "libonnxruntime.so"]);
         assert_eq!(std::fs::read_to_string(dest.join("libonnxruntime.so")).unwrap(), "elf");
         assert!(!dest.join("README.md").exists());

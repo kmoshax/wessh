@@ -24,6 +24,7 @@ face_retouching_natural refresh expand_more palette settings warning frame_perso
 back_hand mood sort hd
 save save_as content_copy compare compare_arrows cancel task_alt replay schedule
 aspect_ratio burst_mode folder video_file terminal edit
+download pause arrow_forward verified_user bolt cloud_off
 """.split()
 
 HERE = pathlib.Path(__file__).parent

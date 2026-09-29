@@ -10,8 +10,13 @@
 //! - `WAJH_UI_OUTPUT=<file>`: where the Video screen writes.
 //! - `WAJH_UI_RENDER=1`: start rendering the video as soon as it and the face are ready.
 //! - `WAJH_UI_LOOPBACK=missing`: show the Live screen as if v4l2loopback were not loaded.
+//! - `WAJH_UI_ONBOARDING=welcome|download|done`: show that onboarding page even if everything
+//!   is installed (with a temporary `WAJH_HOME`, onboarding shows by itself). While onboarding
+//!   shows, `WAJH_UI_CAPTURE` saves the page 2 s after start unless `WAJH_UI_CAPTURE_AT` is set.
+//! - `WAJH_UI_PAUSE_AT=<seconds>`: pause the onboarding download at that time.
 
 use super::screens::Screen;
+use super::screens::onboarding::Step;
 use crate::live::Phase;
 use eframe::egui::{self, Context, Event, UserData, ViewportCommand};
 use std::path::{Path, PathBuf};
@@ -30,6 +35,7 @@ pub struct DevOptions {
     pub output: Option<PathBuf>,
     pub render: bool,
     pub loopback_missing: bool,
+    pub onboarding: Option<Step>,
 }
 
 impl DevOptions {
@@ -56,6 +62,7 @@ impl DevOptions {
             output: std::env::var_os("WAJH_UI_OUTPUT").map(PathBuf::from),
             render: var("WAJH_UI_RENDER") == "1",
             loopback_missing: var("WAJH_UI_LOOPBACK") == "missing",
+            onboarding: Step::parse(&var("WAJH_UI_ONBOARDING")),
         }
     }
 }

@@ -111,6 +111,15 @@ impl SwapModel {
     }
 }
 
+/// The curated model set: every model the pipeline can use with `settings`, whichever of its
+/// features are switched on. This is exactly what first-run setup downloads, so toggling a
+/// feature never triggers a download. With default settings the swap model is
+/// [`SwapModel::default()`] and the occluder [`OccluderModel::default()`].
+#[must_use]
+pub fn required(settings: &crate::Settings) -> [Asset; 6] {
+    [DETECTOR, RECOGNIZER, settings.swap_model.asset(), ENHANCER, settings.occluder_model.asset(), crate::face::masker::PARSER_ASSET]
+}
+
 /// Root of wajh's per-user data (`$WAJH_HOME`, or the platform data dir).
 #[must_use]
 pub fn data_dir() -> PathBuf {
