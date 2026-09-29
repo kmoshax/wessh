@@ -42,8 +42,8 @@ impl Swapper {
     pub fn new(engine: &Engine, kind: SwapModel) -> Result<Self> {
         let asset = kind.asset();
         // TensorRT's fp16 build of inswapper (already an fp16 export) produces a washed-out,
-        // noisy face; fp32 matches CUDA and is still faster.
-        let shapes = StaticShapes { tensorrt_fp32: kind == SwapModel::Inswapper, ..StaticShapes::default() };
+        // noisy face, and its fp32 build is slower (34 ms) than the CUDA provider (22 ms, RTX 4050).
+        let shapes = StaticShapes { skip_tensorrt: kind == SwapModel::Inswapper, ..StaticShapes::default() };
         let network = match engine.load_static_with(&asset, &shapes) {
             Ok(model) => {
                 let index = |name: &str| {

@@ -20,8 +20,9 @@ pub struct StaticShapes<'a> {
     pub dimensions: &'a [(&'a str, i64)],
     /// Shapes of the outputs, in order, for outputs whose shape metadata stays symbolic.
     pub outputs: &'a [Vec<usize>],
-    /// Keep the network in fp32 under TensorRT, for models whose fp16 engine is wrong.
-    pub tensorrt_fp32: bool,
+    /// Run on the CUDA provider even on the TensorRT backend, for models TensorRT gets wrong
+    /// or doesn't speed up.
+    pub skip_tensorrt: bool,
 }
 
 /// Runs made before a static model is handed out: cuDNN autotuning, then CUDA graph capture.
@@ -34,8 +35,6 @@ struct SessionOptions<'a> {
     cuda_graph: bool,
     /// Offer the network to TensorRT first (on the TensorRT backend).
     tensorrt: bool,
-    /// Let TensorRT build the engine in fp16.
-    fp16: bool,
     /// Prefix of the model's TensorRT engine cache files. ONNX Runtime names cached engines
     /// after a hash of the graph that ignores dimension overrides, so without a prefix naming
     /// the pinned shapes, a detector loaded at 192 px would pick up the engine built at 640 px
@@ -128,7 +127,7 @@ impl Engine {
     /// Load `asset` (downloading it if needed) with this engine's execution providers.
     pub fn load(&self, asset: &Asset) -> Result<Model> {
         let path = asset.ensure()?;
-        let options = SessionOptions { cuda_graph: false, tensorrt: true, fp16: true, cache_prefix: &cache_prefix(asset, &[], false) };
+        let options = SessionOptions { cuda_graph: false, tensorrt: true, cache_prefix: &cache_prefix(asset, &[], false) };
         let session = self.session(&path, None, &options, &[]).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
         Ok(Model::new(session, asset.name))
     }
@@ -150,7 +149,7 @@ impl Engine {
         let patched = shapes.patch.map(|patch| proto::patch_graph(&std::fs::read(&path)?, patch)).transpose()?;
         let prefix = cache_prefix(asset, shapes.dimensions, patched.is_some());
         let load = |cuda_graph: bool, tensorrt: bool| -> Result<StaticModel> {
-            let options = SessionOptions { cuda_graph, tensorrt, fp16: !shapes.tensorrt_fp32, cache_prefix: &prefix };
+            let options = SessionOptions { cuda_graph, tensorrt, cache_prefix: &prefix };
             let session = self
                 .session(&path, patched.as_deref(), &options, shapes.dimensions)
                 .map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
@@ -160,7 +159,7 @@ impl Engine {
             }
             Ok(model)
         };
-        let providers: &[bool] = if self.backend == Backend::TensorRt { &[true, false] } else { &[false] };
+        let providers: &[bool] = if self.backend == Backend::TensorRt && !shapes.skip_tensorrt { &[true, false] } else { &[false] };
         let mut last = None;
         for &tensorrt in providers {
             // The TensorRT provider's CUDA graph replays without refreshing our host-bound
@@ -228,7 +227,7 @@ impl Engine {
             let _ = std::fs::create_dir_all(&cache);
             let cache = cache.to_string_lossy().into_owned();
             TensorRT::default()
-                .with_fp16(options.fp16)
+                .with_fp16(true)
                 .with_engine_cache(true)
                 .with_engine_cache_path(&cache)
                 .with_engine_cache_prefix(options.cache_prefix)
