@@ -21,6 +21,7 @@ dark_mode error face flip folder_open graphic_eq groups hourglass_top image info
 light_mode memory movie photo_camera play_arrow speed stop swap_horiz timer tune
 upload videocam videocam_off crop_free center_focus_strong cast sensors
 face_retouching_natural refresh expand_more palette settings warning frame_person
+back_hand mood sort hd
 """.split()
 
 HERE = pathlib.Path(__file__).parent

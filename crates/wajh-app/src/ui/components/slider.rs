@@ -67,7 +67,7 @@ impl Widget for Slider<'_> {
 
         let t = emath::remap_clamp(value, min..=max, 0.0..=1.0);
         let handle_x = emath::lerp(track.x_range(), t);
-        let active = paint::content(colors.primary, enabled);
+        let active = colors.primary;
         let inactive = if enabled { colors.secondary_container } else { paint::container(colors.on_surface, false) };
         let painter = ui.painter();
         let outer = shape::full(TRACK_HEIGHT);

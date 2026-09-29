@@ -66,10 +66,11 @@ impl App {
         let theme = ThemeConfig { brightness, ..ThemeConfig::default() };
         theme::install_fonts(ctx);
         theme::apply(ctx, theme);
+        let mut live = LiveScreen::default();
         if let Some(source) = dev.source {
-            session.set_source(source);
+            live.request_source(ctx, &session, &Snapshot::default(), source);
         }
-        Self { session, theme, screen: dev.screen, live: LiveScreen::default(), capture: dev.capture }
+        Self { session, theme, screen: dev.screen, live, capture: dev.capture }
     }
 
     fn toggle_brightness(&mut self, ctx: &Context) {
@@ -78,10 +79,10 @@ impl App {
     }
 
     /// Dropped image files become the source face.
-    fn handle_drops(&mut self, ctx: &Context) {
+    fn handle_drops(&mut self, ctx: &Context, snapshot: &Snapshot) {
         let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
         if let Some(path) = dropped {
-            self.session.set_source(path);
+            self.live.request_source(ctx, &self.session, snapshot, path);
             self.screen = Screen::Live;
         }
     }
@@ -141,8 +142,8 @@ fn backend_chip(ui: &mut egui::Ui, snapshot: &Snapshot) {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        self.handle_drops(ctx);
         let snapshot = self.session.snapshot();
+        self.handle_drops(ctx, &snapshot);
         self.live.sync(ctx, &self.session, &snapshot);
         self.handle_shortcuts(ctx, &snapshot);
 
