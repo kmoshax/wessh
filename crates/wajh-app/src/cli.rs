@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
-use wajh_core::assets::SwapModel;
+use wajh_core::assets::{OccluderModel, SwapModel};
+use wajh_core::face::{FaceRegion, FaceRegions};
+use wajh_core::pipeline::FaceOrder;
 use wajh_core::{Device, Settings};
 use wajh_media::CameraConfig;
 
@@ -34,6 +36,37 @@ pub struct Options {
     /// Detector input size; smaller is faster (320 suits close-up webcams).
     #[arg(long, global = true, default_value_t = 640)]
     pub detector_size: usize,
+    /// Swapped face resolution: 256/384/512 run a 128 px model on sub-sampled tiles (much sharper,
+    /// costs (size/128)² swaps per face; great for images and video). 0 = model's native size.
+    #[arg(long, global = true, default_value_t = Settings::default().pixel_boost)]
+    pub pixel_boost: usize,
+    /// Keep hands, hair and glasses in front of the face (`XSeg` occlusion mask).
+    #[arg(long, global = true, default_value_t = Settings::default().occlusion, action = clap::ArgAction::Set)]
+    pub occlusion: bool,
+    /// Occlusion model.
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub occluder_model: OccluderModel,
+    /// Only swap these face regions (`BiSeNet` parser), e.g. `skin,nose,eyes`.
+    #[arg(long, global = true, value_enum, value_delimiter = ',')]
+    pub face_regions: Vec<FaceRegion>,
+    /// Keep the original mouth and lips (natural lip-sync when talking).
+    #[arg(long, global = true)]
+    pub mouth_mask: bool,
+    /// Match the swapped face's colours to the original, 0 (off) to 1.
+    #[arg(long, global = true, default_value_t = Settings::default().color_correction)]
+    pub color_correction: f32,
+    /// Order faces are picked in; without --many-faces the first one is swapped.
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub face_order: FaceOrder,
+    /// Only swap faces that look like a face in this image.
+    #[arg(long, global = true)]
+    pub reference: Option<PathBuf>,
+    /// Which face of the reference image (position in --face-order, from 0).
+    #[arg(long, global = true, default_value_t = 0)]
+    pub reference_face: usize,
+    /// Maximum identity distance (1 - cosine similarity) to the reference face.
+    #[arg(long, global = true, default_value_t = Settings::default().reference_distance)]
+    pub reference_distance: f32,
 }
 
 impl Options {
@@ -43,6 +76,15 @@ impl Options {
             enhance: self.enhance,
             many_faces: self.many_faces,
             detector_size: self.detector_size,
+            pixel_boost: self.pixel_boost,
+            occlusion: self.occlusion,
+            occluder_model: self.occluder_model,
+            region_mask: !self.face_regions.is_empty(),
+            face_regions: if self.face_regions.is_empty() { FaceRegions::ALL } else { self.face_regions.iter().copied().collect() },
+            mouth_mask: self.mouth_mask,
+            color_correction: self.color_correction,
+            face_order: self.face_order,
+            reference_distance: self.reference_distance,
             ..Settings::default()
         }
     }
@@ -52,8 +94,9 @@ impl Options {
 pub enum Command {
     /// Swap faces in an image.
     Image {
-        #[arg(short, long)]
-        source: PathBuf,
+        /// Source face image; repeat to average several photos of the same person.
+        #[arg(short, long, required = true, num_args = 1..)]
+        source: Vec<PathBuf>,
         #[arg(short, long)]
         target: PathBuf,
         #[arg(short, long)]
@@ -61,8 +104,9 @@ pub enum Command {
     },
     /// Swap faces in a video file (audio is kept).
     Video {
-        #[arg(short, long)]
-        source: PathBuf,
+        /// Source face image; repeat to average several photos of the same person.
+        #[arg(short, long, required = true, num_args = 1..)]
+        source: Vec<PathBuf>,
         #[arg(short, long)]
         target: String,
         #[arg(short, long)]
@@ -73,8 +117,9 @@ pub enum Command {
     },
     /// Headless live mode: webcam → swap → virtual camera or stream.
     Cam {
-        #[arg(short, long)]
-        source: PathBuf,
+        /// Source face image; repeat to average several photos of the same person.
+        #[arg(short, long, required = true, num_args = 1..)]
+        source: Vec<PathBuf>,
         #[command(flatten)]
         camera: CameraArgs,
         /// /dev/videoN (v4l2loopback) or <udp://127.0.0.1:27000> (OBS media source).
@@ -83,8 +128,9 @@ pub enum Command {
     },
     /// Measure per-stage latency on an image.
     Bench {
-        #[arg(short, long)]
-        source: PathBuf,
+        /// Source face image; repeat to average several photos of the same person.
+        #[arg(short, long, required = true, num_args = 1..)]
+        source: Vec<PathBuf>,
         #[arg(short, long)]
         target: PathBuf,
         #[arg(short = 'n', long, default_value_t = 100)]

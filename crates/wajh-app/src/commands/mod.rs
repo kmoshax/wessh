@@ -8,7 +8,7 @@ mod video;
 
 use crate::cli::{Command, Options};
 use anyhow::Result;
-use std::path::Path;
+use std::path::PathBuf;
 use wajh_core::{Engine, Frame, Processor};
 
 pub fn run(command: Command, options: &Options) -> Result<()> {
@@ -21,12 +21,16 @@ pub fn run(command: Command, options: &Options) -> Result<()> {
     }
 }
 
-/// Engine + processor with every model loaded and the source identity set.
-fn processor(options: &Options, source: &Path) -> Result<Processor> {
+/// Engine + processor with every model loaded, the source identity and any reference face set.
+fn processor(options: &Options, sources: &[PathBuf]) -> Result<Processor> {
     let engine = Engine::init(options.ort.as_deref(), options.device)?;
     eprintln!("backend: {}", engine.backend());
     let mut processor = Processor::new(engine)?;
     processor.prepare(&options.settings())?;
-    processor.set_source(&Frame::open(source)?)?;
+    let sources = sources.iter().map(|path| Frame::open(path)).collect::<wajh_core::Result<Vec<_>>>()?;
+    processor.set_sources(&sources)?;
+    if let Some(reference) = &options.reference {
+        processor.set_reference(&Frame::open(reference)?, options.face_order, options.reference_face)?;
+    }
     Ok(processor)
 }

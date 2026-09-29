@@ -1,13 +1,13 @@
 use super::processor;
 use crate::cli::{CameraArgs, Options};
 use anyhow::{Result, bail};
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wajh_core::{Settings, Stats};
 use wajh_media::{Camera, FrameSink, LatestFrame, OutputTarget};
 
-pub fn run(options: &Options, source: &Path, camera: &CameraArgs, out: Option<&str>) -> Result<()> {
+pub fn run(options: &Options, source: &[PathBuf], camera: &CameraArgs, out: Option<&str>) -> Result<()> {
     let mut processor = processor(options, source)?;
     let settings = Settings { mirror: camera.mirror, ..options.settings() };
     let mailbox = Arc::new(LatestFrame::default());

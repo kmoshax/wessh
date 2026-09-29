@@ -1,10 +1,10 @@
 use super::processor;
 use crate::cli::Options;
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use wajh_core::Frame;
 
-pub fn run(options: &Options, source: &Path, target: &Path, output: &Path) -> Result<()> {
+pub fn run(options: &Options, source: &[PathBuf], target: &Path, output: &Path) -> Result<()> {
     let mut processor = processor(options, source)?;
     let mut frame = Frame::open(target)?;
     let stats = processor.process(&mut frame, &options.settings(), false)?;
