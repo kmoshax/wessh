@@ -2,7 +2,7 @@ use super::{AlignedCrop, Embedding};
 use crate::assets::SwapModel;
 use crate::geometry::{Landmarks5, Template};
 use crate::image::{Frame, Normalization, from_nchw, to_nchw, to_nchw_into, warp_crop};
-use crate::runtime::{Engine, Input, Model, StaticModel, proto};
+use crate::runtime::{Engine, Input, Model, StaticModel, StaticShapes, proto};
 use crate::{Error, Result};
 use std::path::Path;
 
@@ -41,7 +41,10 @@ struct BoundSwap {
 impl Swapper {
     pub fn new(engine: &Engine, kind: SwapModel) -> Result<Self> {
         let asset = kind.asset();
-        let network = match engine.load_static(&asset) {
+        // TensorRT's fp16 build of inswapper (already an fp16 export) produces a washed-out,
+        // noisy face; fp32 matches CUDA and is still faster.
+        let shapes = StaticShapes { tensorrt_fp32: kind == SwapModel::Inswapper, ..StaticShapes::default() };
+        let network = match engine.load_static_with(&asset, &shapes) {
             Ok(model) => {
                 let index = |name: &str| {
                     model
