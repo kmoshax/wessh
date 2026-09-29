@@ -4,6 +4,8 @@ use std::ops::{AddAssign, Div};
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stats {
     pub faces: usize,
+    /// Faces that reused an earlier frame's swap (see `Settings::max_faces_per_frame`).
+    pub swaps_reused: usize,
     pub detect_ms: f32,
     pub swap_ms: f32,
     pub enhance_ms: f32,
@@ -32,6 +34,7 @@ impl Stats {
 impl AddAssign for Stats {
     fn add_assign(&mut self, rhs: Self) {
         self.faces += rhs.faces;
+        self.swaps_reused += rhs.swaps_reused;
         self.detect_ms += rhs.detect_ms;
         self.swap_ms += rhs.swap_ms;
         self.enhance_ms += rhs.enhance_ms;
@@ -51,6 +54,7 @@ impl Div<f32> for Stats {
     fn div(self, n: f32) -> Self {
         Self {
             faces: (self.faces as f32 / n).round() as usize,
+            swaps_reused: (self.swaps_reused as f32 / n).round() as usize,
             detect_ms: self.detect_ms / n,
             swap_ms: self.swap_ms / n,
             enhance_ms: self.enhance_ms / n,
@@ -66,7 +70,11 @@ impl Div<f32> for Stats {
 
 impl std::fmt::Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "detect {:.2} ms | swap {:.2} ms (masks {:.2}", self.detect_ms, self.swap_ms, self.mask_ms)?;
+        write!(f, "detect {:.2} ms | swap {:.2} ms (", self.detect_ms, self.swap_ms)?;
+        if self.swaps_reused > 0 {
+            write!(f, "{} of {} faces reused, ", self.swaps_reused, self.faces)?;
+        }
+        write!(f, "masks {:.2}", self.mask_ms)?;
         if self.occlusion_ms > 0.0 || self.parser_ms > 0.0 {
             write!(f, ": occlusion {:.2}, parser {:.2}", self.occlusion_ms, self.parser_ms)?;
         }

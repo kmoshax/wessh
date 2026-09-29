@@ -34,6 +34,10 @@ pub struct Options {
     /// Swap every face instead of only the largest.
     #[arg(long, global = true)]
     pub many_faces: bool,
+    /// Live modes: swap at most this many faces per frame; the others take turns and reuse their
+    /// last swapped face meanwhile. 0 = no limit.
+    #[arg(long, global = true, default_value_t = Settings::default().max_faces_per_frame)]
+    pub max_faces_per_frame: usize,
     /// Detector input size; smaller is faster (320 suits close-up webcams).
     #[arg(long, global = true, default_value_t = 640)]
     pub detector_size: usize,
@@ -76,6 +80,7 @@ impl Options {
             swap_model: self.model,
             enhance: self.enhance,
             many_faces: self.many_faces,
+            max_faces_per_frame: self.max_faces_per_frame,
             detector_size: self.detector_size,
             pixel_boost: self.pixel_boost,
             occlusion: self.occlusion,

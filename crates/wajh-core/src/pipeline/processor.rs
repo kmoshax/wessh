@@ -1,9 +1,11 @@
 use super::pixel_boost::{self, Swapped};
+use super::reuse::SwapReuse;
 use super::tracker::{FaceTracker, TrackingDetector};
 use super::{FaceOrder, FaceSmoother, Settings, Stats, select};
 use crate::face::masker::{MASK_SIZE, compose_into};
 use crate::face::{AlignedCrop, Detector, Embedding, Enhancer, Face, Masker, Recognizer, Swapper};
-use crate::image::{Frame, Padding, box_mask, match_color, paste_back};
+use crate::geometry::Template;
+use crate::image::{Frame, Padding, box_mask, match_color, paste_back, warp_crop};
 use crate::runtime::{Backend, Engine};
 use crate::{Error, Result};
 use std::collections::VecDeque;
@@ -55,6 +57,11 @@ pub struct Processor {
     tracker: FaceTracker,
     box_masks: BoxMasks,
     paste_mask: PasteMask,
+    reuse: SwapReuse,
+    /// Which faces of the frame are swapped afresh.
+    fresh: Vec<bool>,
+    /// A reused face's crop being pasted.
+    reused_crop: Vec<u8>,
     last_frame: Option<Instant>,
 }
 
@@ -74,6 +81,9 @@ impl Processor {
             tracker: FaceTracker::default(),
             box_masks: BoxMasks(VecDeque::with_capacity(MASK_CACHE)),
             paste_mask: PasteMask::default(),
+            reuse: SwapReuse::default(),
+            fresh: Vec::new(),
+            reused_crop: Vec::new(),
             last_frame: None,
         })
     }
@@ -153,8 +163,13 @@ impl Processor {
             stats.detect_ms = elapsed_ms(started);
 
             let swap_started = Instant::now();
+            let size = pixel_boost::boosted_size(settings.swap_model.resolution(), settings.pixel_boost);
+            let budget = if live { settings.max_faces_per_frame } else { 0 };
+            self.reuse.plan(&faces, budget, size, &mut self.fresh);
             for (index, face) in faces.iter().enumerate() {
-                self.swap_face(index, frame, face, &condition, settings, &mut stats, live)?;
+                let fresh = self.fresh[index];
+                stats.swaps_reused += usize::from(!fresh);
+                self.swap_face(index, frame, face, &condition, settings, &mut stats, live, fresh)?;
             }
             stats.swap_ms = elapsed_ms(swap_started);
             let masks = self.masker.stats();
@@ -177,7 +192,8 @@ impl Processor {
         Ok(stats)
     }
 
-    /// Swap face number `index` into `frame`; its model mask stays in the masker for the enhancer.
+    /// Swap face number `index` into `frame` — afresh, or with its last swap when not `fresh`;
+    /// its model mask stays in the masker for the enhancer.
     #[expect(clippy::too_many_arguments, reason = "one call site; the arguments are the frame's context")]
     fn swap_face(
         &mut self,
@@ -188,10 +204,21 @@ impl Processor {
         settings: &Settings,
         stats: &mut Stats,
         live: bool,
+        fresh: bool,
     ) -> Result<()> {
         let swapper = self.swapper.as_mut().expect("prepared");
         let size = pixel_boost::boosted_size(swapper.kind().resolution(), settings.pixel_boost);
-        let Swapped { mut face, original } = pixel_boost::swap(swapper, frame, &target.landmarks, condition, size)?;
+        let Swapped { mut face, original } = if fresh {
+            let swapped = pixel_boost::swap(swapper, frame, &target.landmarks, condition, size)?;
+            self.reuse.store(index, &swapped.face.pixels, size);
+            swapped
+        } else {
+            // The last swap, pasted through the face's current alignment.
+            let to_crop = Template::Arcface128.align(&target.landmarks, size);
+            let mut pixels = std::mem::take(&mut self.reused_crop);
+            self.reuse.load(index, &mut pixels);
+            Swapped { face: AlignedCrop { pixels, size, to_crop }, original: warp_crop(frame, &to_crop, size) }
+        };
 
         let mask_started = Instant::now();
         let model_mask = self.masker.face_mask(index, frame, target, &original, &face, live)?;
@@ -202,6 +229,9 @@ impl Processor {
         stats.mask_ms += elapsed_ms(mask_started);
 
         paste(frame, &face, mask, 1.0);
+        if !fresh {
+            self.reused_crop = face.pixels;
+        }
         Ok(())
     }
 
