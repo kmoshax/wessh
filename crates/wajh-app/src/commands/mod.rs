@@ -2,8 +2,10 @@
 
 mod bench;
 mod cam;
+mod doctor;
 mod image;
 mod models;
+pub mod setup;
 mod video;
 
 use crate::cli::{Command, Options};
@@ -18,6 +20,8 @@ pub fn run(command: Command, options: &Options) -> Result<()> {
         Command::Cam { source, camera, out } => cam::run(options, &source, &camera, out.as_deref()),
         Command::Bench { source, target, iterations, profile } => bench::run(options, &source, &target, iterations, profile),
         Command::Models => models::run(options),
+        Command::Setup(args) => setup::run(&args, options),
+        Command::Doctor => doctor::run(options),
     }
 }
 

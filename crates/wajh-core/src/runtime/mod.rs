@@ -2,7 +2,7 @@
 
 mod binding;
 mod engine;
-mod locate;
+pub mod locate;
 mod model;
 pub mod proto;
 

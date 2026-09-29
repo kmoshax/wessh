@@ -1,29 +1,51 @@
-//! Desktop UI (egui). Talks to the worker only through [`LiveSession`].
+//! Desktop UI (egui), styled after Material Design 3. Talks to the worker only through
+//! [`LiveSession`].
+//!
+//! - [`theme`]: HCT colour scheme, type scale, tokens and the egui style mapping.
+//! - [`components`]: reusable MD3 widgets.
+//! - [`screens`]: the Live / Image / Video destinations.
+
+mod capture;
+mod components;
+mod file_picker;
+mod icons;
+mod screens;
+mod theme;
 
 use crate::cli::Options;
-use crate::live::{EngineOptions, Image, LiveSession, Phase};
-use eframe::egui;
-use std::path::PathBuf;
-use wajh_core::assets::SwapModel;
-use wajh_media::{CameraConfig, OutputTarget};
+use crate::live::{EngineOptions, LiveSession, Phase, Snapshot};
+use components::navigation::{RAIL_WIDTH, TOP_APP_BAR_HEIGHT};
+use components::{Chip, IconButton, drop_overlay, navigation_rail, top_app_bar};
+use eframe::egui::{self, CentralPanel, Context, Key, Margin, SidePanel, TopBottomPanel};
+use screens::{LiveScreen, Screen, offline_screen};
+use theme::{Brightness, ThemeConfig, spacing};
 
+const INITIAL_WINDOW: [f32; 2] = [1320.0, 840.0];
+const MIN_WINDOW: [f32; 2] = [560.0, 480.0];
+/// Content width from which the settings sheet docks beside the preview
+/// (MD3 "expanded" window class starts at 840 dp).
+const EXPANDED_BREAKPOINT: f32 = 840.0;
+const APP_NAME: &str = "wajh";
+
+/// Open the desktop app.
 pub fn run(options: Options) -> anyhow::Result<()> {
     let native = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1320.0, 820.0]).with_title("wajh"),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size(INITIAL_WINDOW)
+            .with_min_inner_size(MIN_WINDOW)
+            .with_title(APP_NAME)
+            .with_app_id(APP_NAME),
         vsync: false,
         ..Default::default()
     };
     eframe::run_native(
-        "wajh",
+        APP_NAME,
         native,
         Box::new(move |cc| {
+            let engine = EngineOptions { runtime: options.ort.clone(), device: options.device };
             let ctx = cc.egui_ctx.clone();
-            let session = LiveSession::spawn(
-                EngineOptions { runtime: options.ort.clone(), device: options.device },
-                options.settings(),
-                move || ctx.request_repaint(),
-            );
-            Ok(Box::new(App::new(session)))
+            let session = LiveSession::spawn(engine, options.settings(), move || ctx.request_repaint());
+            Ok(Box::new(App::new(&cc.egui_ctx, session)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
@@ -31,105 +53,116 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 
 struct App {
     session: LiveSession,
-    preview: Option<egui::TextureHandle>,
-    source: Option<egui::TextureHandle>,
-    source_path: String,
-    camera: CameraConfig,
-    output_enabled: bool,
-    output_target: String,
+    theme: ThemeConfig,
+    screen: Screen,
+    live: LiveScreen,
+    capture: Option<capture::Capture>,
 }
 
 impl App {
-    fn new(session: LiveSession) -> Self {
-        Self {
-            session,
-            preview: None,
-            source: None,
-            source_path: String::new(),
-            camera: CameraConfig::default(),
-            output_enabled: false,
-            output_target: OutputTarget::default_for_platform().as_str().to_owned(),
+    fn new(ctx: &Context, session: LiveSession) -> Self {
+        let dev = capture::DevOptions::from_env();
+        let brightness = if dev.light { Brightness::Light } else { Brightness::Dark };
+        let theme = ThemeConfig { brightness, ..ThemeConfig::default() };
+        theme::install_fonts(ctx);
+        theme::apply(ctx, theme);
+        if let Some(source) = dev.source {
+            session.set_source(source);
         }
+        Self { session, theme, screen: dev.screen, live: LiveScreen::default(), capture: dev.capture }
+    }
+
+    fn toggle_brightness(&mut self, ctx: &Context) {
+        self.theme.brightness = self.theme.brightness.toggled();
+        theme::apply(ctx, self.theme);
+    }
+
+    /// Dropped image files become the source face.
+    fn handle_drops(&mut self, ctx: &Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
+        if let Some(path) = dropped {
+            self.session.set_source(path);
+            self.screen = Screen::Live;
+        }
+    }
+
+    /// Space starts/stops the camera unless a widget has keyboard focus.
+    fn handle_shortcuts(&self, ctx: &Context, snapshot: &Snapshot) {
+        let space = ctx.input(|i| i.key_pressed(Key::Space));
+        if space && ctx.memory(|m| m.focused().is_none()) && self.screen == Screen::Live {
+            self.live.toggle_live(&self.session, snapshot);
+        }
+    }
+
+    fn app_bar(&mut self, ctx: &Context, snapshot: &Snapshot, expanded: bool) {
+        let colors = theme::colors(ctx);
+        let frame = egui::Frame::new().fill(colors.surface);
+        TopBottomPanel::top("app-bar").exact_height(TOP_APP_BAR_HEIGHT).frame(frame).show_separator_line(false).show(ctx, |ui| {
+            let mut toggle_theme = false;
+            let mut toggle_sheet = false;
+            top_app_bar(ui, icons::FACE, APP_NAME, |ui| {
+                ui.spacing_mut().item_spacing.x = spacing::SM;
+                let (icon, tip) = if colors.is_dark() { (icons::LIGHT_MODE, "Light theme") } else { (icons::DARK_MODE, "Dark theme") };
+                toggle_theme = ui.add(IconButton::new(icon, tip)).clicked();
+                if !expanded && self.screen == Screen::Live {
+                    toggle_sheet = ui.add(IconButton::new(icons::TUNE, "Settings")).clicked();
+                }
+                backend_chip(ui, snapshot);
+            });
+            if toggle_theme {
+                self.toggle_brightness(ctx);
+            }
+            if toggle_sheet {
+                self.live.toggle_sheet();
+            }
+        });
+    }
+
+    fn rail(&mut self, ctx: &Context) {
+        let colors = theme::colors(ctx);
+        let frame = egui::Frame::new().fill(colors.surface);
+        SidePanel::left("rail").exact_width(RAIL_WIDTH).resizable(false).frame(frame).show_separator_line(false).show(ctx, |ui| {
+            navigation_rail(ui, &mut self.screen, &Screen::DESTINATIONS);
+        });
     }
 }
 
-fn upload(ctx: &egui::Context, slot: &mut Option<egui::TextureHandle>, name: &str, image: &Image) {
-    let pixels = egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.rgba);
-    match slot {
-        Some(texture) => texture.set(pixels, egui::TextureOptions::LINEAR),
-        None => *slot = Some(ctx.load_texture(name, pixels, egui::TextureOptions::LINEAR)),
+/// Inference backend readout; tonal while loading, primary once ready.
+fn backend_chip(ui: &mut egui::Ui, snapshot: &Snapshot) {
+    let (label, icon) = match &snapshot.phase {
+        Phase::Loading => ("Loading…".to_owned(), icons::HOURGLASS_TOP),
+        Phase::Failed(_) => ("Unavailable".to_owned(), icons::WARNING),
+        Phase::Ready | Phase::Live => (snapshot.backend.clone(), icons::MEMORY),
+    };
+    if !label.is_empty() {
+        ui.add(Chip::status(&label, false).icon(icon)).on_hover_text("Inference backend");
     }
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(path) = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone())) {
-            self.source_path = path.display().to_string();
-            self.session.set_source(path);
-        }
-        if let Some(image) = self.session.take_preview() {
-            upload(ctx, &mut self.preview, "preview", &image);
-        }
-        if let Some(image) = self.session.take_source_thumbnail() {
-            upload(ctx, &mut self.source, "source", &image);
-        }
+    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.handle_drops(ctx);
         let snapshot = self.session.snapshot();
-        let live = snapshot.phase == Phase::Live;
-        let mut settings = self.session.settings();
+        self.live.sync(ctx, &self.session, &snapshot);
+        self.handle_shortcuts(ctx, &snapshot);
 
-        egui::SidePanel::left("controls").exact_width(300.0).show(ctx, |ui| {
-            ui.heading("wajh");
-            ui.label(format!("backend: {}", snapshot.backend));
-            if let Some(texture) = &self.source {
-                ui.add(egui::Image::new(texture).max_height(180.0));
-            }
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.source_path);
-                if ui.button("Load").clicked() {
-                    self.session.set_source(PathBuf::from(self.source_path.trim()));
-                }
-            });
-            ui.add_enabled_ui(!live, |ui| {
-                ui.text_edit_singleline(&mut self.camera.device);
-                ui.checkbox(&mut self.output_enabled, "Virtual camera");
-                if self.output_enabled {
-                    ui.text_edit_singleline(&mut self.output_target);
-                }
-            });
-            if ui.button(if live { "Stop" } else { "Start" }).clicked() {
-                if live {
-                    self.session.stop();
-                } else {
-                    let output = self.output_enabled.then(|| OutputTarget::parse(&self.output_target));
-                    self.session.start(self.camera.clone(), output);
-                }
-            }
-            egui::ComboBox::from_label("Model").selected_text(settings.swap_model.label()).show_ui(ui, |ui| {
-                for model in SwapModel::ALL {
-                    ui.selectable_value(&mut settings.swap_model, model, model.label());
-                }
-            });
-            ui.checkbox(&mut settings.enhance, "Enhance");
-            ui.checkbox(&mut settings.mirror, "Mirror");
-            ui.checkbox(&mut settings.many_faces, "All faces");
-            if live {
-                ui.monospace(format!("{:.1} fps  {}", snapshot.fps, snapshot.stats));
-            }
-            if let Phase::Failed(error) = &snapshot.phase {
-                ui.colored_label(egui::Color32::RED, error);
-            }
-            if let Some(notice) = &snapshot.notice {
-                ui.label(notice);
+        let expanded = ctx.content_rect().width() - RAIL_WIDTH >= EXPANDED_BREAKPOINT;
+        self.app_bar(ctx, &snapshot, expanded);
+        self.rail(ctx);
+        let colors = theme::colors(ctx);
+        let margin = Margin { left: 0, right: spacing::XL as i8, top: 0, bottom: spacing::XL as i8 };
+        CentralPanel::default().frame(egui::Frame::new().fill(colors.surface).inner_margin(margin)).show(ctx, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            match self.screen {
+                Screen::Live => self.live.ui(ui, &self.session, &snapshot, expanded),
+                other => offline_screen(ui, rect, other),
             }
         });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(texture) = &self.preview {
-                let scale = (ui.available_size() / texture.size_vec2()).min_elem();
-                ui.centered_and_justified(|ui| ui.add(egui::Image::new(texture).fit_to_exact_size(texture.size_vec2() * scale)));
-            }
-        });
-        if settings != self.session.settings() {
-            self.session.set_settings(settings);
+
+        let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        drop_overlay(ctx, ctx.content_rect(), "Drop to use this face", "The photo becomes the source face", hovering);
+        if let Some(capture) = &mut self.capture {
+            capture.update(ctx, &snapshot.phase);
         }
     }
 }
