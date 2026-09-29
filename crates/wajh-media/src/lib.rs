@@ -10,7 +10,7 @@ mod latest;
 mod sink;
 mod video;
 
-pub use camera::{Camera, CameraConfig, default_camera_device};
+pub use camera::{Camera, CameraConfig, default_camera_device, is_network_source};
 pub use devices::{Devices, LOOPBACK_MODPROBE, LoopbackStatus, VideoDevice, list_devices};
 pub use error::{Error, Result};
 pub use latest::LatestFrame;

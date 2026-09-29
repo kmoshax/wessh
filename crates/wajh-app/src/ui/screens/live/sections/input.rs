@@ -175,6 +175,11 @@ fn refresh_button(ui: &mut Ui, scanning: bool) -> bool {
 
 // ── Camera ─────────────────────────────────────────────────────────────────────
 
+/// Address format of phone camera apps (IP Webcam's default port and path).
+const PHONE_URL_EXAMPLE: &str = "http://192.168.1.20:8080/video";
+const PHONE_HELP: &str = "Phone as camera: install IP Webcam (Android) or DroidCam, start its server on the same \
+Wi-Fi, and paste the http:// or rtsp:// address it shows.";
+
 const RESOLUTIONS: [((usize, usize), &str); 3] = [((640, 480), "480p"), ((1280, 720), "720p"), ((1920, 1080), "1080p")];
 const FRAME_RATES: [(u32, &str); 3] = [(15, "15"), (30, "30"), (60, "60")];
 
@@ -192,10 +197,13 @@ pub(super) fn camera(ui: &mut Ui, frame: &mut Frame<'_>) {
         |ui| refresh = refresh_button(ui, scanning),
         |ui| {
             ui.add_enabled_ui(!live, |ui| {
-                let hint = wajh_media::default_camera_device();
+                let hint = format!("{} or {PHONE_URL_EXAMPLE}", wajh_media::default_camera_device());
                 device_picker(ui, "Device", icons::PHOTO_CAMERA, &options, &mut form.camera.device, &mut form.camera_custom, &hint);
                 if scanned && options.is_empty() {
                     caption(ui, "No cameras found — type the device instead");
+                }
+                if form.camera_custom || wajh_media::is_network_source(&form.camera.device) {
+                    caption(ui, PHONE_HELP);
                 }
                 caption(ui, "Resolution");
                 let camera = &mut form.camera;
