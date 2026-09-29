@@ -20,7 +20,7 @@ pub fn needed(options: &Options) -> Vec<Asset> {
         needed.push(settings.occluder_model.asset());
     }
     if settings.region_mask || settings.mouth_mask {
-        needed.push(assets::PARSER);
+        needed.push(wajh_core::face::masker::PARSER_ASSET);
     }
     needed
 }
