@@ -1,21 +1,48 @@
-[package]
-name = "wajh"
-version = "0.1.0"
-edition = "2024"
-description = "Real-time face swap in Rust"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
 
-[dependencies]
-# ONNX Runtime is loaded at runtime (no multi-GB binaries baked into the build).
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-26", "cuda", "tensorrt", "lax-feature-matching"] }
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kmosha/wajh"
+
+[workspace.dependencies]
+wajh-core = { path = "crates/wajh-core" }
+wajh-media = { path = "crates/wajh-media" }
+# ONNX Runtime is loaded at runtime, so the binary stays small and GPU support is a drop-in.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-28", "cuda", "tensorrt", "lax-feature-matching"] }
 eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rayon = "1.10"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
+thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
-libc = "0.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+many_single_char_names = "allow"
+similar_names = "allow"
+unreadable_literal = "allow"
+excessive_precision = "allow"
+struct_excessive_bools = "allow"
+float_cmp = "allow"
 
 [profile.release]
 opt-level = 3

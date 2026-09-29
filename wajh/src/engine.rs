@@ -82,7 +82,7 @@ impl Engine {
                     .build(),
             );
         }
-        let threads = std::env::var("WAJH_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8) / 2).max(1));
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let session = Session::builder()
             .map_err(|e| anyhow!("{e}"))?
             .with_optimization_level(GraphOptimizationLevel::All)
@@ -103,6 +103,7 @@ fn log_warn(msg: &str) {
 }
 
 pub struct Output {
+    pub shape: Vec<i64>,
     pub data: Vec<f32>,
 }
 
@@ -121,8 +122,8 @@ impl Model {
         let outputs = self.session.run(values)?;
         let mut out = Vec::with_capacity(outputs.len());
         for (_, v) in outputs.iter() {
-            let (_, data) = v.try_extract_tensor::<f32>()?;
-            out.push(Output { data: data.to_vec() });
+            let (shape, data) = v.try_extract_tensor::<f32>()?;
+            out.push(Output { shape: shape.to_vec(), data: data.to_vec() });
         }
         Ok(out)
     }

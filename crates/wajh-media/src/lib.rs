@@ -1,0 +1,16 @@
+//! Video I/O through ffmpeg subprocesses: webcam capture, virtual-camera / stream output and
+//! video files. ffmpeg does all decoding and encoding (incl. NVENC / `VideoToolbox`) natively;
+//! only raw BGR frames cross the pipes.
+
+mod camera;
+mod error;
+mod ffmpeg;
+mod latest;
+mod sink;
+mod video;
+
+pub use camera::{Camera, CameraConfig, default_camera_device};
+pub use error::{Error, Result};
+pub use latest::LatestFrame;
+pub use sink::{FrameSink, OutputTarget};
+pub use video::{Encoder, VideoInfo, VideoReader, probe};

@@ -95,6 +95,10 @@ impl Processor {
         Ok(())
     }
 
+    pub fn has_source(&self) -> bool {
+        self.source_embedding.is_some()
+    }
+
     fn ensure_models(&mut self, settings: &Settings) -> Result<()> {
         if self.swapper.as_ref().map(|s| s.kind) != Some(settings.swap_model) {
             self.swapper = None;

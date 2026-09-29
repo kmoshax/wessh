@@ -2571,18 +2571,37 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "wajh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
  "crossbeam-channel",
- "dirs",
  "eframe",
  "image",
- "libc",
- "ort",
  "parking_lot",
+ "wajh-core",
+ "wajh-media",
+]
+
+[[package]]
+name = "wajh-core"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "dirs",
+ "image",
+ "ort",
  "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "wajh-media"
+version = "0.2.0"
+dependencies = [
+ "parking_lot",
+ "thiserror 2.0.21",
+ "wajh-core",
 ]
 
 [[package]]

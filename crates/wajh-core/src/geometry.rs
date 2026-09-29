@@ -1,4 +1,4 @@
-//! 2D similarity/affine helpers used for face alignment.
+//! 2D similarity transforms and the 5-point templates used to align faces.
 
 pub type Point = [f32; 2];
 pub type Landmarks5 = [Point; 5];
@@ -60,14 +60,14 @@ impl Affine {
 /// Normalized 5-point alignment templates (from InsightFace / FaceFusion).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
-    Arcface112V2,
+    Arcface112,
     Arcface128,
 }
 
 impl Template {
     pub fn points(self) -> Landmarks5 {
         match self {
-            Template::Arcface112V2 => [
+            Template::Arcface112 => [
                 [0.34191607, 0.46157411],
                 [0.65653393, 0.45983393],
                 [0.50022500, 0.64050536],

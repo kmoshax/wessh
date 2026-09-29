@@ -1,0 +1,23 @@
+[package]
+name = "wajh"
+description = "Real-time face swap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wajh"
+path = "src/main.rs"
+
+[dependencies]
+wajh-core = { workspace = true, features = ["clap"] }
+wajh-media.workspace = true
+eframe.workspace = true
+image.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

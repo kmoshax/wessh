@@ -1,0 +1,56 @@
+use parking_lot::Mutex;
+use wajh_core::{Settings, Stats};
+
+/// RGBA pixels ready for upload to a texture.
+#[derive(Clone, Debug)]
+pub struct Image {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+/// What the worker is doing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Phase {
+    #[default]
+    Loading,
+    Ready,
+    Live,
+    Failed(String),
+}
+
+/// Everything the UI shows about the session, copied out under one lock.
+#[derive(Clone, Debug, Default)]
+pub struct Snapshot {
+    pub phase: Phase,
+    /// Transient notice (e.g. "no face in source image").
+    pub notice: Option<String>,
+    pub backend: String,
+    pub has_source: bool,
+    pub source_name: Option<String>,
+    pub stats: Stats,
+    pub fps: f32,
+    pub output_active: bool,
+}
+
+pub(super) struct Shared {
+    pub settings: Mutex<Settings>,
+    pub snapshot: Mutex<Snapshot>,
+    pub preview: Mutex<Option<Image>>,
+    pub source_thumbnail: Mutex<Option<Image>>,
+}
+
+impl Shared {
+    pub fn new(settings: Settings) -> Self {
+        Self {
+            settings: Mutex::new(settings),
+            snapshot: Mutex::new(Snapshot::default()),
+            preview: Mutex::new(None),
+            source_thumbnail: Mutex::new(None),
+        }
+    }
+
+    pub fn update(&self, f: impl FnOnce(&mut Snapshot)) {
+        f(&mut self.snapshot.lock());
+    }
+}
