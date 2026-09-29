@@ -27,6 +27,8 @@ pub const RECOGNIZER: Asset = facefusion!("models-3.0.0", "arcface_w600k_r50");
 pub const ENHANCER: Asset = facefusion!("models-3.0.0", "gpen_bfr_256");
 /// `BiSeNet` face parser (19 `CelebAMask-HQ` classes, 512px).
 pub const PARSER: Asset = facefusion!("models-3.0.0", "bisenet_resnet_34");
+/// The lighter `BiSeNet` backbone, same classes and resolution.
+pub const PARSER_LITE: Asset = facefusion!("models-3.1.0", "bisenet_resnet_18");
 
 /// `XSeg` occluders: segment the visible face so hands, hair and glasses in front of it survive.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

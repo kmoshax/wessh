@@ -1,7 +1,7 @@
-use crate::assets;
-use crate::runtime::{Engine, Input, Model};
+use crate::assets::Asset;
+use crate::runtime::proto::{DataType, GraphPatch, Node, TensorInfo};
+use crate::runtime::{Engine, StaticModel, StaticShapes};
 use crate::{Error, Result};
-use rayon::prelude::*;
 
 /// Parts of the face the `BiSeNet` parser can separate (`CelebAMask-HQ` classes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -114,29 +114,78 @@ impl FromIterator<FaceRegion> for FaceRegions {
     }
 }
 
+/// Name of the logits output in `FaceFusion`'s `BiSeNet` exports (the other two are training-time
+/// auxiliary heads, pruned away).
+const LOGITS: &str = "output";
+/// Value names added by the label-map patch.
+const LABELS_I64: &str = "wajh_labels_i64";
+const LABELS: &str = "wajh_labels";
+/// `Cast.to` for `float`.
+const CAST_TO_FLOAT: i64 = DataType::Float as i64;
+
 /// `BiSeNet` face parser: per-pixel class labels for an aligned face crop.
+///
+/// The network is patched on load so it computes the label map itself: the auxiliary heads are
+/// pruned, an `ArgMax` over the 19 class logits is appended, and only the `size`² label map
+/// comes back from the GPU instead of three `19×512×512` logit tensors. Its fixed-kernel
+/// global pools become `GlobalAveragePool`, identical at the trained 512 px and valid at any
+/// other input size.
 pub struct Parser {
-    model: Model,
-    input_name: String,
+    model: StaticModel,
+    size: usize,
 }
 
 impl Parser {
-    /// Side length of the (`Arcface128`-aligned) crop the parser works on.
-    pub const SIZE: usize = 512;
-    const CLASSES: usize = 19;
+    /// Side length the parser was trained at.
+    pub const NATIVE_SIZE: usize = 512;
     const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
     const STD: [f32; 3] = [0.229, 0.224, 0.225];
 
-    pub fn new(engine: &Engine) -> Result<Self> {
-        let model = engine.load(&assets::PARSER)?;
-        let input_name = model.input_names().first().map_or_else(|| "input".to_owned(), |n| (*n).to_owned());
-        Ok(Self { model, input_name })
+    /// Load `asset` (a `BiSeNet` export) running on `size`² crops.
+    pub fn new(engine: &Engine, asset: &Asset, size: usize) -> Result<Self> {
+        let side = size as i64;
+        let input_dims = [1, 3, side, side];
+        let label_dims = [1, side, side];
+        let patch = GraphPatch {
+            inputs: &[TensorInfo { name: "input", data_type: DataType::Float, dims: &input_dims }],
+            retype: &[("AveragePool", "GlobalAveragePool")],
+            unpad_conv_transpose: false,
+            nodes: &[
+                Node {
+                    op_type: "ArgMax",
+                    name: "wajh_argmax",
+                    inputs: &[LOGITS],
+                    outputs: &[LABELS_I64],
+                    attributes: &[("axis", 1), ("keepdims", 0)],
+                },
+                Node {
+                    op_type: "Cast",
+                    name: "wajh_cast",
+                    inputs: &[LABELS_I64],
+                    outputs: &[LABELS],
+                    attributes: &[("to", CAST_TO_FLOAT)],
+                },
+            ],
+            outputs: &[TensorInfo { name: LABELS, data_type: DataType::Float, dims: &label_dims }],
+        };
+        let outputs = [vec![1, size, size]];
+        let model = engine.load_static_with(asset, &StaticShapes { patch: Some(&patch), outputs: &outputs, ..StaticShapes::default() })?;
+        if model.output(0).len() != size * size {
+            return Err(Error::UnexpectedOutput { model: asset.name, detail: format!("{} labels", model.output(0).len()) });
+        }
+        Ok(Self { model, size })
     }
 
-    /// `1.0` where a pixel of the `SIZE`² BGR crop belongs to `regions`, else `0.0`.
-    pub fn regions(&mut self, crop: &[u8], regions: FaceRegions) -> Result<Vec<f32>> {
-        let plane = Self::SIZE * Self::SIZE;
-        let mut input = vec![0f32; plane * 3];
+    /// Side of the crops [`Parser::parse`] takes.
+    #[must_use]
+    pub const fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Class label of every pixel of a `size`² BGR crop (as `f32`).
+    pub fn parse(&mut self, crop: &[u8]) -> Result<&[f32]> {
+        let plane = self.size * self.size;
+        let input = self.model.input_mut(0);
         for c in 0..3 {
             let (scale, bias) = (1.0 / (255.0 * Self::STD[c]), -Self::MEAN[c] / Self::STD[c]);
             // Model channel c is RGB; the crop is BGR.
@@ -144,21 +193,15 @@ impl Parser {
                 *dst = f32::from(px[2 - c]).mul_add(scale, bias);
             }
         }
-        let size = Self::SIZE as i64;
-        let logits = self.model.run_single(vec![Input { name: &self.input_name, shape: vec![1, 3, size, size], data: input }])?;
-        if logits.len() != plane * Self::CLASSES {
-            return Err(Error::UnexpectedOutput { model: assets::PARSER.name, detail: format!("{} values", logits.len()) });
-        }
-        let mut mask = vec![0f32; plane];
-        mask.par_chunks_mut(Self::SIZE).enumerate().for_each(|(y, row)| {
-            for (x, value) in row.iter_mut().enumerate() {
-                let i = y * Self::SIZE + x;
-                let class =
-                    (0..Self::CLASSES).map(|c| logits[c * plane + i]).enumerate().max_by(|a, b| a.1.total_cmp(&b.1)).map_or(0, |(c, _)| c);
-                *value = if regions.contains_class(class as u8) { 1.0 } else { 0.0 };
-            }
-        });
-        Ok(mask)
+        self.model.run()?;
+        Ok(self.model.output(0))
+    }
+}
+
+/// `1.0` where a label belongs to `regions`, else `0.0`.
+pub fn select_regions(labels: &[f32], regions: FaceRegions, out: &mut [f32]) {
+    for (o, &label) in out.iter_mut().zip(labels) {
+        *o = f32::from(u8::from(regions.contains_class(label as u8)));
     }
 }
 
@@ -175,5 +218,12 @@ mod tests {
         assert!(mouth.contains_class(12) && mouth.contains_class(13) && !mouth.contains_class(1));
         assert_eq!(FaceRegions::ALL.with(FaceRegion::Skin, false).iter().count(), 6);
         assert!(FaceRegions::NONE.is_empty());
+    }
+
+    #[test]
+    fn selects_labels() {
+        let mut out = [9.0; 4];
+        select_regions(&[0.0, 12.0, 11.0, 1.0], FaceRegions::MOUTH, &mut out);
+        assert_eq!(out, [0.0, 1.0, 1.0, 0.0]);
     }
 }

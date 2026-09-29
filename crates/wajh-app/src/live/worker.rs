@@ -1,3 +1,4 @@
+use super::presenter::{Control, Presenter};
 use super::state::{Image, Phase, Shared};
 use super::{Command, EngineOptions};
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -10,17 +11,24 @@ use wajh_media::{Camera, FrameSink, LatestFrame};
 const THUMBNAIL: u32 = 256;
 const FPS_WINDOW: Duration = Duration::from_millis(500);
 
-/// Camera + optional output that exist only while live.
+/// The camera, which exists only while live.
 struct Stream {
     _camera: Camera,
-    output: Option<FrameSink>,
 }
 
-pub(super) fn run(engine: &EngineOptions, shared: &Shared, inbox: &Receiver<Command>, repaint: &dyn Fn()) {
+pub(super) fn run(engine: &EngineOptions, shared: &Arc<Shared>, inbox: &Receiver<Command>, repaint: &Arc<dyn Fn() + Send + Sync>) {
     let mut processor = match load(engine, shared) {
         Ok(p) => p,
         Err(e) => {
             shared.update(|s| s.phase = Phase::Failed(format!("{e:#}")));
+            repaint();
+            return;
+        }
+    };
+    let presenter = match Presenter::spawn(shared.clone(), repaint.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            shared.update(|s| s.phase = Phase::Failed(format!("presenter thread: {e}")));
             repaint();
             return;
         }
@@ -47,10 +55,12 @@ pub(super) fn run(engine: &EngineOptions, shared: &Shared, inbox: &Receiver<Comm
             }
         };
         if let Some(command) = command {
-            handle(command, &mut processor, &mut stream, &mailbox, shared);
+            handle(command, &mut processor, &mut stream, &mailbox, shared, &presenter);
             repaint();
         }
-        let Some(active) = stream.as_mut() else { continue };
+        if stream.is_none() {
+            continue;
+        }
         let Some(mut frame) = mailbox.take_newer(&mut seen, Duration::from_millis(100)) else { continue };
 
         let settings = shared.settings.lock().clone();
@@ -70,17 +80,7 @@ pub(super) fn run(engine: &EngineOptions, shared: &Shared, inbox: &Receiver<Comm
             }
             Err(e) => shared.update(|s| s.notice = Some(format!("{e:#}"))),
         }
-        if let Some(output) = active.output.as_mut()
-            && let Err(e) = output.write(&frame)
-        {
-            active.output = None;
-            shared.update(|s| {
-                s.output_active = false;
-                s.notice = Some(format!("virtual camera stopped: {e}"));
-            });
-        }
-        *shared.preview.lock() = Some(Image { width: frame.width, height: frame.height, rgba: frame.to_rgba() });
-        repaint();
+        presenter.present(frame);
     }
 }
 
@@ -92,7 +92,14 @@ fn load(engine: &EngineOptions, shared: &Shared) -> anyhow::Result<Processor> {
     Ok(processor)
 }
 
-fn handle(command: Command, processor: &mut Processor, stream: &mut Option<Stream>, mailbox: &Arc<LatestFrame>, shared: &Shared) {
+fn handle(
+    command: Command,
+    processor: &mut Processor,
+    stream: &mut Option<Stream>,
+    mailbox: &Arc<LatestFrame>,
+    shared: &Shared,
+    presenter: &Presenter,
+) {
     match command {
         Command::SetSource(path) => match load_source(processor, &path) {
             Ok(thumbnail) => {
@@ -108,6 +115,7 @@ fn handle(command: Command, processor: &mut Processor, stream: &mut Option<Strea
         },
         Command::Start { camera, output } => {
             *stream = None; // release the device before reopening it
+            presenter.control(Control::Stream { output: None, camera: None });
             match Camera::start(&camera, mailbox.clone()) {
                 Ok(capture) => {
                     let output = output.and_then(|target| match FrameSink::live(&target, camera.width, camera.height, camera.fps) {
@@ -118,7 +126,8 @@ fn handle(command: Command, processor: &mut Processor, stream: &mut Option<Strea
                         }
                     });
                     let output_active = output.is_some();
-                    *stream = Some(Stream { _camera: capture, output });
+                    presenter.control(Control::Stream { output, camera: Some(mailbox.clone()) });
+                    *stream = Some(Stream { _camera: capture });
                     shared.update(|s| {
                         s.phase = Phase::Live;
                         s.output_active = output_active;
@@ -129,6 +138,7 @@ fn handle(command: Command, processor: &mut Processor, stream: &mut Option<Strea
         }
         Command::Stop => {
             *stream = None;
+            presenter.control(Control::Stream { output: None, camera: None });
             shared.update(|s| {
                 s.phase = Phase::Ready;
                 s.output_active = false;

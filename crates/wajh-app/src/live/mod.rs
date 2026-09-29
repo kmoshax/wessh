@@ -1,6 +1,8 @@
-//! Live session: capture → swap → preview / virtual camera on a dedicated worker thread.
+//! Live session: capture → swap on a dedicated worker thread, preview conversion and virtual
+//! camera output on a presenter thread.
 //! The UI drives it only through [`LiveSession`]'s methods and reads [`Snapshot`]s back.
 
+mod presenter;
 mod state;
 mod worker;
 
@@ -47,13 +49,13 @@ impl Drop for LiveSession {
 
 impl LiveSession {
     /// Spawn the worker. `repaint` is called whenever there is something new to show.
-    pub fn spawn(engine: EngineOptions, settings: Settings, repaint: impl Fn() + Send + 'static) -> Self {
+    pub fn spawn(engine: EngineOptions, settings: Settings, repaint: impl Fn() + Send + Sync + 'static) -> Self {
         let (commands, inbox) = crossbeam_channel::unbounded();
         let shared = Arc::new(Shared::new(settings));
         let worker_shared = shared.clone();
         let worker = std::thread::Builder::new()
             .name("live".into())
-            .spawn(move || worker::run(&engine, &worker_shared, &inbox, &repaint))
+            .spawn(move || worker::run(&engine, &worker_shared, &inbox, &(Arc::new(repaint) as Arc<dyn Fn() + Send + Sync>)))
             .expect("spawning the live worker thread");
         Self { commands, shared, worker: Some(worker) }
     }
@@ -88,6 +90,11 @@ impl LiveSession {
     #[must_use]
     pub fn take_preview(&self) -> Option<Image> {
         self.shared.preview.lock().take()
+    }
+
+    /// Hand back a preview's pixel buffer once it has been uploaded, so the next preview reuses it.
+    pub fn recycle_preview(&self, image: Image) {
+        *self.shared.recycled.lock() = Some(image.rgba);
     }
 
     /// Thumbnail of a newly loaded source face.

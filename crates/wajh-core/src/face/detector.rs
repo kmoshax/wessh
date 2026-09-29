@@ -51,7 +51,10 @@ impl Detector {
         if !self.models.contains_key(&size) {
             let outputs = output_shapes(size);
             let dimensions = [(SIZE_DIMENSION, size as i64)];
-            let model = self.engine.load_static_with(&assets::DETECTOR, &StaticShapes { dimensions: &dimensions, outputs: &outputs })?;
+            let model = self.engine.load_static_with(
+                &assets::DETECTOR,
+                &StaticShapes { dimensions: &dimensions, outputs: &outputs, ..StaticShapes::default() },
+            )?;
             self.models.insert(size, model);
         }
         Ok(self.models.get_mut(&size).expect("inserted above"))

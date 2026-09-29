@@ -2,6 +2,7 @@
 
 pub mod pixel_boost;
 mod processor;
+mod reuse;
 mod selection;
 mod settings;
 mod smoothing;

@@ -14,6 +14,10 @@ pub struct Settings {
     pub pixel_boost: usize,
     /// Swap every detected face instead of only the largest.
     pub many_faces: bool,
+    /// Live video: run the swap network on at most this many faces per frame; the others take
+    /// turns and meanwhile reuse their last swapped face, re-warped to where they are now (the
+    /// expression lags a few frames). `0` swaps every face every frame.
+    pub max_faces_per_frame: usize,
     /// Order faces are picked in (with `many_faces` off, the first one is swapped).
     pub face_order: FaceOrder,
     /// With a reference face set, only swap faces whose identity distance (`1 - cosine
@@ -63,6 +67,7 @@ impl Default for Settings {
             swap_model: SwapModel::default(),
             pixel_boost: 0,
             many_faces: false,
+            max_faces_per_frame: 0,
             face_order: FaceOrder::default(),
             reference_distance: 0.6,
             enhance: false,

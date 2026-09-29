@@ -24,6 +24,7 @@ pub fn run(options: &Options, source: &[PathBuf], camera: &CameraArgs, out: Opti
         if let Some(sink) = sink.as_mut() {
             sink.write(&frame)?;
         }
+        mailbox.recycle(frame);
         frames += 1;
         if window.elapsed() >= Duration::from_secs(1) {
             let fps = frames as f32 / window.elapsed().as_secs_f32();

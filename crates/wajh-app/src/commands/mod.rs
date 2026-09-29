@@ -18,7 +18,9 @@ pub fn run(command: Command, options: &Options) -> Result<()> {
         Command::Image { source, target, output } => image::run(options, &source, &target, &output),
         Command::Video { source, target, output, encoder } => video::run(options, &source, &target, &output, encoder),
         Command::Cam { source, camera, out } => cam::run(options, &source, &camera, out.as_deref()),
-        Command::Bench { source, target, iterations, profile } => bench::run(options, &source, &target, iterations, profile),
+        Command::Bench { source, target, iterations, profile, motion } => {
+            bench::run(options, &source, &target, iterations, profile, motion)
+        }
         Command::Models => models::run(options),
         Command::Setup(args) => setup::run(&args, options),
         Command::Doctor => doctor::run(options),

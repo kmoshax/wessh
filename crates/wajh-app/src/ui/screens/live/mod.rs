@@ -134,6 +134,7 @@ impl LiveScreen {
     pub fn sync(&mut self, ctx: &Context, session: &LiveSession, snapshot: &Snapshot) {
         if let Some(image) = session.take_preview() {
             upload(ctx, &mut self.preview, "preview", &image);
+            session.recycle_preview(image);
         }
         if let Some(image) = session.take_source_thumbnail() {
             upload(ctx, &mut self.source, "source", &image);
