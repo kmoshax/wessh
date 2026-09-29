@@ -139,6 +139,10 @@ pub enum Command {
         /// Also print per-stage p50/p95 and a CPU-kernel breakdown at 1080p.
         #[arg(long)]
         profile: bool,
+        /// Move the camera (pan and zoom) from frame to frame, like handheld live video, instead
+        /// of repeating one still frame — what the live-mode mask cache sees in practice.
+        #[arg(long)]
+        motion: bool,
     },
     /// Download the models the chosen options need.
     Models,

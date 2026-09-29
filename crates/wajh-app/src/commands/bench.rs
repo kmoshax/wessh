@@ -15,17 +15,18 @@ const WARMUP: usize = 5;
 const KERNEL_FRAME: (usize, usize) = (1920, 1080);
 const KERNEL_ITERATIONS: usize = 200;
 
-pub fn run(options: &Options, source: &[PathBuf], target: &Path, iterations: usize, profile: bool) -> Result<()> {
+pub fn run(options: &Options, source: &[PathBuf], target: &Path, iterations: usize, profile: bool, motion: bool) -> Result<()> {
     let mut processor = processor(options, source)?;
     let settings = options.settings();
     let image = Frame::open(target)?;
-    for _ in 0..WARMUP {
-        processor.process(&mut image.clone(), &settings, true)?;
+    let mut frame = image.clone();
+    for i in 0..WARMUP {
+        load_frame(&image, &mut frame, motion.then_some(i));
+        processor.process(&mut frame, &settings, true)?;
     }
     let mut samples = Vec::with_capacity(iterations);
-    let mut frame = image.clone();
-    for _ in 0..iterations {
-        frame.data.copy_from_slice(&image.data);
+    for i in 0..iterations {
+        load_frame(&image, &mut frame, motion.then_some(WARMUP + i));
         samples.push(processor.process(&mut frame, &settings, true)?);
     }
     let mean = samples.iter().copied().fold(Stats::default(), |mut acc, s| {
@@ -40,18 +41,68 @@ pub fn run(options: &Options, source: &[PathBuf], target: &Path, iterations: usi
     Ok(())
 }
 
+/// Camera path of `--motion`: a slow pan (amplitude in pixels, frequency in Hz) and zoom, at
+/// an assumed 30 fps. Large enough that faces move tens of pixels per second, small enough
+/// that the tracker keeps them.
+const MOTION_FPS: f32 = 30.0;
+const PAN: [(f32, f32); 2] = [(40.0, 0.5), (20.0, 0.3)];
+const ZOOM: (f32, f32) = (0.06, 0.2);
+
+/// Fill `frame` with `image`, or with frame `index` of the `--motion` camera path over it.
+fn load_frame(image: &Frame, frame: &mut Frame, index: Option<usize>) {
+    let Some(index) = index else {
+        frame.data.copy_from_slice(&image.data);
+        return;
+    };
+    let t = index as f32 / MOTION_FPS;
+    let wave = |(amplitude, hz): (f32, f32)| amplitude * (std::f32::consts::TAU * hz * t).sin();
+    let (dx, dy, zoom) = (wave(PAN[0]), wave(PAN[1]), 1.0 + ZOOM.0 + wave(ZOOM));
+    let (cx, cy) = (image.width as f32 / 2.0, image.height as f32 / 2.0);
+    for (y, row) in frame.data.chunks_exact_mut(frame.width * Frame::CHANNELS).enumerate() {
+        let sy = ((y as f32 - cy) / zoom + cy + dy).clamp(0.0, (image.height - 1) as f32);
+        for (x, px) in row.as_chunks_mut::<{ Frame::CHANNELS }>().0.iter_mut().enumerate() {
+            let sx = ((x as f32 - cx) / zoom + cx + dx).clamp(0.0, (image.width - 1) as f32);
+            // Bilinear, so sub-pixel motion is smooth.
+            let (x0, y0) = (sx as usize, sy as usize);
+            let (x1, y1) = ((x0 + 1).min(image.width - 1), (y0 + 1).min(image.height - 1));
+            let (fx, fy) = (sx - x0 as f32, sy - y0 as f32);
+            let at = |x: usize, y: usize, c: usize| f32::from(image.data[(y * image.width + x) * Frame::CHANNELS + c]);
+            for (c, v) in px.iter_mut().enumerate() {
+                let top = at(x0, y0, c) + (at(x1, y0, c) - at(x0, y0, c)) * fx;
+                let bottom = at(x0, y1, c) + (at(x1, y1, c) - at(x0, y1, c)) * fx;
+                *v = (top + (bottom - top) * fy).round() as u8;
+            }
+        }
+    }
+}
+
 /// A named per-frame timing.
 type Stage = (&'static str, fn(&Stats) -> f32);
 
-/// p50 / p95 / max of every stage.
+/// p50 / p95 / max of every stage, and how often the live-mode mask cache served a mask.
 fn print_percentiles(samples: &[Stats]) {
-    let stages: [Stage; 4] =
-        [("detect", |s| s.detect_ms), ("swap", |s| s.swap_ms), ("enhance", |s| s.enhance_ms), ("total", |s| s.total_ms)];
+    let stages: [Stage; 7] = [
+        ("detect", |s| s.detect_ms),
+        ("swap", |s| s.swap_ms),
+        ("masks", |s| s.mask_ms),
+        ("occlusion", |s| s.occlusion_ms),
+        ("parser", |s| s.parser_ms),
+        ("enhance", |s| s.enhance_ms),
+        ("total", |s| s.total_ms),
+    ];
     println!("{:<10} {:>8} {:>8} {:>8}", "stage", "p50", "p95", "max");
     for (name, stage) in stages {
         let mut values: Vec<f32> = samples.iter().map(stage).collect();
         values.sort_by(f32::total_cmp);
         println!("{name:<10} {:>8.2} {:>8.2} {:>8.2}", percentile(&values, 0.5), percentile(&values, 0.95), percentile(&values, 1.0));
+    }
+    let (computed, reused) = samples.iter().fold((0, 0), |(c, r), s| (c + s.masks_computed, r + s.masks_reused));
+    if computed + reused > 0 {
+        println!(
+            "mask cache: {reused} of {} model masks reused ({:.0}%)",
+            computed + reused,
+            100.0 * reused as f32 / (computed + reused) as f32
+        );
     }
 }
 

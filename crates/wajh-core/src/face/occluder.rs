@@ -1,12 +1,15 @@
 use crate::assets::OccluderModel;
-use crate::runtime::{Engine, Input, Model};
+use crate::runtime::proto::{DataType, GraphPatch, TensorInfo};
+use crate::runtime::{Engine, StaticModel, StaticShapes};
 use crate::{Error, Result};
+
+/// Input of the `XSeg` exports (NHWC, symbolic batch — named differently in every version).
+const INPUT: &str = "input";
 
 /// `XSeg` face segmentation: `1` where the face is visible, `0` where something covers it.
 pub struct Occluder {
-    model: Model,
+    model: StaticModel,
     kind: OccluderModel,
-    input_name: String,
 }
 
 impl Occluder {
@@ -14,9 +17,22 @@ impl Occluder {
     pub const SIZE: usize = 256;
 
     pub fn new(engine: &Engine, kind: OccluderModel) -> Result<Self> {
-        let model = engine.load(&kind.asset())?;
-        let input_name = model.input_names().first().map_or_else(|| "input".to_owned(), |n| (*n).to_owned());
-        Ok(Self { model, kind, input_name })
+        let asset = kind.asset();
+        let side = Self::SIZE as i64;
+        let input_dims = [1, side, side, 3];
+        let outputs = [vec![1, Self::SIZE, Self::SIZE, 1]];
+        // XSeg's decoder upsamples with end-padded ConvTransposes, which CUDA would run on the CPU
+        // (≈ 20 ms of its ≈ 29 ms); rewritten, the whole network runs on the GPU.
+        let patch = GraphPatch {
+            inputs: &[TensorInfo { name: INPUT, data_type: DataType::Float, dims: &input_dims }],
+            unpad_conv_transpose: true,
+            ..GraphPatch::default()
+        };
+        let model = engine.load_static_with(&asset, &StaticShapes { patch: Some(&patch), outputs: &outputs, ..StaticShapes::default() })?;
+        if model.output(0).len() != Self::SIZE * Self::SIZE {
+            return Err(Error::UnexpectedOutput { model: asset.name, detail: format!("{} values", model.output(0).len()) });
+        }
+        Ok(Self { model, kind })
     }
 
     #[must_use]
@@ -24,19 +40,13 @@ impl Occluder {
         self.kind
     }
 
-    /// Visibility of each pixel of a `SIZE`² BGR crop, in `[0, 1]`.
-    pub fn visible(&mut self, crop: &[u8]) -> Result<Vec<f32>> {
-        let size = Self::SIZE as i64;
+    /// Visibility of each pixel of a `SIZE`² BGR crop (unclamped; the caller clamps to `[0, 1]`).
+    pub fn visible(&mut self, crop: &[u8]) -> Result<&[f32]> {
         // XSeg takes NHWC BGR in [0, 1] — the crop's own layout.
-        let data = crop.iter().map(|&v| f32::from(v) / 255.0).collect();
-        let input = Input { name: &self.input_name, shape: vec![1, size, size, 3], data };
-        let mut mask = self.model.run_single(vec![input])?;
-        if mask.len() != Self::SIZE * Self::SIZE {
-            return Err(Error::UnexpectedOutput { model: self.kind.asset().name, detail: format!("{} values", mask.len()) });
+        for (dst, &v) in self.model.input_mut(0).iter_mut().zip(crop) {
+            *dst = f32::from(v) / 255.0;
         }
-        for v in &mut mask {
-            *v = v.clamp(0.0, 1.0);
-        }
-        Ok(mask)
+        self.model.run()?;
+        Ok(self.model.output(0))
     }
 }

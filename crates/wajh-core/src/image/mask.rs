@@ -21,15 +21,22 @@ pub fn box_mask(size: usize, blur: f32, padding: Padding) -> Vec<f32> {
 
 /// Separable Gaussian blur with edge clamping.
 pub fn gaussian_blur(plane: &mut [f32], width: usize, height: usize, sigma: f32) {
+    gaussian_blur_with(plane, width, height, sigma, &mut Vec::new(), &mut Vec::new());
+}
+
+/// [`gaussian_blur`] with caller-owned scratch buffers (the kernel and the intermediate plane),
+/// which stop allocating once they have grown to size.
+pub fn gaussian_blur_with(plane: &mut [f32], width: usize, height: usize, sigma: f32, kernel: &mut Vec<f32>, tmp: &mut Vec<f32>) {
     let radius = (sigma * 3.0).ceil() as isize;
-    let mut kernel: Vec<f32> = (-radius..=radius).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect();
+    kernel.clear();
+    kernel.extend((-radius..=radius).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()));
     let sum: f32 = kernel.iter().sum();
-    for k in &mut kernel {
+    for k in kernel.iter_mut() {
         *k /= sum;
     }
 
     let clamp = |v: isize, len: usize| v.clamp(0, len as isize - 1) as usize;
-    let mut tmp = vec![0f32; width * height];
+    tmp.resize(width * height, 0.0);
     for y in 0..height {
         for x in 0..width {
             tmp[y * width + x] =

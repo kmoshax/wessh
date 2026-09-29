@@ -7,10 +7,18 @@ use rayon::prelude::*;
 /// aliasing); everything else is bilinear with pixel-centre alignment.
 #[must_use]
 pub fn resize_plane(src: &[f32], src_size: usize, dst_size: usize) -> Vec<f32> {
-    if src_size == dst_size {
-        return src.to_vec();
-    }
     let mut out = vec![0f32; dst_size * dst_size];
+    resize_plane_into(src, src_size, dst_size, &mut out);
+    out
+}
+
+/// [`resize_plane`] into a caller-owned `dst_size`² buffer.
+pub fn resize_plane_into(src: &[f32], src_size: usize, dst_size: usize, out: &mut [f32]) {
+    assert_eq!(out.len(), dst_size * dst_size, "output buffer must hold a dst_size² plane");
+    if src_size == dst_size {
+        out.copy_from_slice(src);
+        return;
+    }
     if src_size > dst_size && src_size.is_multiple_of(dst_size) {
         let k = src_size / dst_size;
         let weight = 1.0 / (k * k) as f32;
@@ -20,7 +28,7 @@ pub fn resize_plane(src: &[f32], src_size: usize, dst_size: usize) -> Vec<f32> {
                 *value = sum * weight;
             }
         });
-        return out;
+        return;
     }
     let scale = src_size as f32 / dst_size as f32;
     let limit = (src_size - 1) as f32;
@@ -31,28 +39,42 @@ pub fn resize_plane(src: &[f32], src_size: usize, dst_size: usize) -> Vec<f32> {
             *value = sample::bilinear_plane(src, src_size, sx, sy);
         }
     });
-    out
 }
 
 /// Resize a square interleaved BGR crop (bilinear, pixel-centre aligned; downscales
 /// average a grid of sub-samples like [`super::warp_crop`]).
 #[must_use]
 pub fn resize_crop(src: &[u8], src_size: usize, dst_size: usize) -> Vec<u8> {
+    let mut out = vec![0u8; dst_size * dst_size * 3];
+    resize_crop_into(src, src_size, dst_size, &mut out);
+    out
+}
+
+/// Most sub-samples per axis when shrinking a crop.
+const MAX_GRID: usize = 4;
+
+/// [`resize_crop`] into a caller-owned `dst_size`² BGR buffer.
+pub fn resize_crop_into(src: &[u8], src_size: usize, dst_size: usize, out: &mut [u8]) {
+    assert_eq!(out.len(), dst_size * dst_size * 3, "output buffer must hold a dst_size² BGR crop");
     if src_size == dst_size {
-        return src.to_vec();
+        out.copy_from_slice(src);
+        return;
     }
     let scale = src_size as f32 / dst_size as f32;
-    let grid = (scale.ceil() as usize).clamp(1, 4);
-    let offsets: Vec<f32> = (0..grid).map(|i| ((i as f32 + 0.5) / grid as f32 - 0.5) * scale).collect();
+    let grid = (scale.ceil() as usize).clamp(1, MAX_GRID);
+    let mut offsets = [0f32; MAX_GRID];
+    for (i, o) in offsets[..grid].iter_mut().enumerate() {
+        *o = ((i as f32 + 0.5) / grid as f32 - 0.5) * scale;
+    }
+    let offsets = &offsets[..grid];
     let weight = 1.0 / (grid * grid) as f32;
-    let mut out = vec![0u8; dst_size * dst_size * 3];
     out.par_chunks_exact_mut(dst_size * 3).enumerate().for_each(|(y, row)| {
         let cy = (y as f32 + 0.5).mul_add(scale, -0.5);
         for (x, pixel) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
             let cx = (x as f32 + 0.5).mul_add(scale, -0.5);
             let mut acc = [0f32; 3];
-            for dy in &offsets {
-                for dx in &offsets {
+            for dy in offsets {
+                for dx in offsets {
                     let s = sample::bilinear(src, src_size, src_size, cx + dx, cy + dy);
                     acc.iter_mut().zip(s).for_each(|(a, s)| *a += s);
                 }
@@ -62,7 +84,6 @@ pub fn resize_crop(src: &[u8], src_size: usize, dst_size: usize) -> Vec<u8> {
             }
         }
     });
-    out
 }
 
 #[cfg(test)]

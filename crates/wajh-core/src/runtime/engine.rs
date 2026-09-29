@@ -1,4 +1,5 @@
 use super::binding::{Placement, StaticModel};
+use super::proto::{self, GraphPatch};
 use super::{Model, locate};
 use crate::assets::{Asset, data_dir};
 use crate::{Error, Result};
@@ -8,9 +9,13 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use std::path::Path;
 
-/// Fixed sizes for a model's symbolic dimensions (see [`Engine::load_static_with`]).
+/// Fixed sizes for a model's symbolic dimensions, and graph edits applied before loading it
+/// (see [`Engine::load_static_with`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StaticShapes<'a> {
+    /// Applied to the ONNX file before ONNX Runtime sees it: pinned input shapes, a reduced
+    /// output, pruned heads.
+    pub patch: Option<&'a GraphPatch<'a>>,
     /// `(dimension name, size)` overrides applied to the graph's free dimensions.
     pub dimensions: &'a [(&'a str, i64)],
     /// Shapes of the outputs, in order, for outputs whose shape metadata stays symbolic.
@@ -105,7 +110,7 @@ impl Engine {
     /// Load `asset` (downloading it if needed) with this engine's execution providers.
     pub fn load(&self, asset: &Asset) -> Result<Model> {
         let path = asset.ensure()?;
-        let session = self.session(&path, false, &[]).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
+        let session = self.session(&path, None, false, &[]).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
         Ok(Model::new(session, asset.name))
     }
 
@@ -122,9 +127,11 @@ impl Engine {
     /// the model is reloaded without a graph.
     pub fn load_static_with(&self, asset: &Asset, shapes: &StaticShapes<'_>) -> Result<StaticModel> {
         let path = asset.ensure()?;
+        let patched = shapes.patch.map(|patch| proto::patch_graph(&std::fs::read(&path)?, patch)).transpose()?;
         let load = |cuda_graph: bool| -> Result<StaticModel> {
-            let session =
-                self.session(&path, cuda_graph, shapes.dimensions).map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
+            let session = self
+                .session(&path, patched.as_deref(), cuda_graph, shapes.dimensions)
+                .map_err(|source| Error::ModelLoad { path: path.clone(), source })?;
             let mut model = StaticModel::new(session, asset.name, self.placement(), shapes.outputs)?;
             for _ in 0..WARMUP_RUNS {
                 model.run()?;
@@ -153,7 +160,8 @@ impl Engine {
         matches!(self.backend, Backend::Cuda | Backend::TensorRt) && std::env::var("WAJH_CUDA_GRAPH").map_or(true, |v| v != "0")
     }
 
-    fn session(&self, path: &Path, cuda_graph: bool, dimensions: &[(&str, i64)]) -> ort::Result<Session> {
+    /// A session for the model at `path`, or for `bytes` (a patched copy of it) when given.
+    fn session(&self, path: &Path, bytes: Option<&[u8]>, cuda_graph: bool, dimensions: &[(&str, i64)]) -> ort::Result<Session> {
         // CUDA runs whole graphs on the GPU; CoreML may leave nodes on the CPU, which want threads.
         let gpu = matches!(self.backend, Backend::Cuda | Backend::TensorRt);
         let mut builder = Session::builder()?;
@@ -165,14 +173,17 @@ impl Engine {
             let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             builder = builder.with_profiling(Path::new(&dir).join(stem)).map_err(ort::Error::<()>::from)?;
         }
-        builder
+        let mut builder = builder
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(ort::Error::<()>::from)?
             .with_intra_threads(if gpu { 1 } else { self.cpu_threads })
             .map_err(ort::Error::<()>::from)?
             .with_execution_providers(self.execution_providers(cuda_graph))
-            .map_err(ort::Error::<()>::from)?
-            .commit_from_file(path)
+            .map_err(ort::Error::<()>::from)?;
+        match bytes {
+            Some(bytes) => builder.commit_from_memory(bytes),
+            None => builder.commit_from_file(path),
+        }
     }
 
     fn execution_providers(&self, cuda_graph: bool) -> Vec<ExecutionProviderDispatch> {

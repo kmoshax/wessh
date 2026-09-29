@@ -1,9 +1,8 @@
 use super::pixel_boost::{self, Swapped};
 use super::tracker::{FaceTracker, TrackingDetector};
 use super::{FaceOrder, FaceSmoother, Settings, Stats, select};
-use crate::face::masker::{MASK_SIZE, compose};
+use crate::face::masker::{MASK_SIZE, compose_into};
 use crate::face::{AlignedCrop, Detector, Embedding, Enhancer, Face, Masker, Recognizer, Swapper};
-use crate::geometry::Landmarks5;
 use crate::image::{Frame, Padding, box_mask, match_color, paste_back};
 use crate::runtime::{Backend, Engine};
 use crate::{Error, Result};
@@ -14,6 +13,30 @@ type MaskKey = (usize, u32, [u32; 4]);
 /// Box masks kept: enough for the swap and enhance crops, small enough that dragging a
 /// blur/padding slider can't grow the cache without bound.
 const MASK_CACHE: usize = 4;
+
+/// Recently used box masks, most recent first.
+struct BoxMasks(VecDeque<(MaskKey, Vec<f32>)>);
+
+impl BoxMasks {
+    fn get(&mut self, size: usize, blur: f32, padding: Padding) -> &[f32] {
+        let key = (size, blur.to_bits(), padding.map(f32::to_bits));
+        let entry = if let Some(i) = self.0.iter().position(|(k, _)| *k == key) {
+            self.0.remove(i).expect("index in range")
+        } else {
+            self.0.truncate(MASK_CACHE - 1);
+            (key, box_mask(size, blur, padding))
+        };
+        self.0.push_front(entry);
+        &self.0[0].1
+    }
+}
+
+/// Buffers for the final paste mask, reused every frame.
+#[derive(Default)]
+struct PasteMask {
+    mask: Vec<f32>,
+    resampled: Vec<f32>,
+}
 
 /// Owns the models and per-stream state; call [`Processor::process`] once per frame.
 pub struct Processor {
@@ -30,8 +53,8 @@ pub struct Processor {
     reference: Option<Embedding>,
     smoother: FaceSmoother,
     tracker: FaceTracker,
-    /// Most recently used first.
-    masks: VecDeque<(MaskKey, Vec<f32>)>,
+    box_masks: BoxMasks,
+    paste_mask: PasteMask,
     last_frame: Option<Instant>,
 }
 
@@ -49,7 +72,8 @@ impl Processor {
             reference: None,
             smoother: FaceSmoother::default(),
             tracker: FaceTracker::default(),
-            masks: VecDeque::with_capacity(MASK_CACHE),
+            box_masks: BoxMasks(VecDeque::with_capacity(MASK_CACHE)),
+            paste_mask: PasteMask::default(),
             last_frame: None,
         })
     }
@@ -122,28 +146,29 @@ impl Processor {
         }
         self.prepare(settings)?;
         let mut stats = Stats::default();
+        self.masker.begin_frame(&settings.mask_spec());
         if let Some(condition) = self.condition.clone() {
             let faces = self.detect(frame, settings, live)?;
             stats.faces = faces.len();
             stats.detect_ms = elapsed_ms(started);
 
             let swap_started = Instant::now();
-            let mut model_masks = Vec::with_capacity(faces.len());
-            for face in &faces {
-                model_masks.push(self.swap_face(frame, &face.landmarks, &condition, settings, &mut stats)?);
+            for (index, face) in faces.iter().enumerate() {
+                self.swap_face(index, frame, face, &condition, settings, &mut stats, live)?;
             }
             stats.swap_ms = elapsed_ms(swap_started);
+            let masks = self.masker.stats();
+            (stats.occlusion_ms, stats.parser_ms, stats.masks_computed, stats.masks_reused) =
+                (masks.occlusion_ms, masks.parser_ms, masks.computed, masks.reused);
 
             if settings.enhance {
                 let enhance_started = Instant::now();
-                for (face, model_mask) in faces.iter().zip(&model_masks) {
+                for (index, face) in faces.iter().enumerate() {
                     let crop = self.enhancer.as_mut().expect("prepared").enhance(frame, &face.landmarks)?;
-                    let mask = compose(
-                        self.box_mask(crop.size, settings.mask_blur, [0.0; 4]),
-                        crop.size,
-                        model_mask.as_deref().map(|m| (m, MASK_SIZE)),
-                    );
-                    paste(frame, &crop, &mask, settings.enhance_blend);
+                    let PasteMask { mask, resampled } = &mut self.paste_mask;
+                    let box_mask = self.box_masks.get(crop.size, settings.mask_blur, [0.0; 4]);
+                    compose_into(box_mask, crop.size, self.masker.mask(index).map(|m| (m, MASK_SIZE)), mask, resampled);
+                    paste(frame, &crop, mask, settings.enhance_blend);
                 }
                 stats.enhance_ms = elapsed_ms(enhance_started);
             }
@@ -152,28 +177,32 @@ impl Processor {
         Ok(stats)
     }
 
-    /// Swap one face into `frame`; returns its model mask (for the enhancer to reuse).
+    /// Swap face number `index` into `frame`; its model mask stays in the masker for the enhancer.
+    #[expect(clippy::too_many_arguments, reason = "one call site; the arguments are the frame's context")]
     fn swap_face(
         &mut self,
+        index: usize,
         frame: &mut Frame,
-        landmarks: &Landmarks5,
+        target: &Face,
         condition: &[f32],
         settings: &Settings,
         stats: &mut Stats,
-    ) -> Result<Option<Vec<f32>>> {
+        live: bool,
+    ) -> Result<()> {
         let swapper = self.swapper.as_mut().expect("prepared");
         let size = pixel_boost::boosted_size(swapper.kind().resolution(), settings.pixel_boost);
-        let Swapped { mut face, original } = pixel_boost::swap(swapper, frame, landmarks, condition, size)?;
+        let Swapped { mut face, original } = pixel_boost::swap(swapper, frame, &target.landmarks, condition, size)?;
 
         let mask_started = Instant::now();
-        let model_mask = self.masker.face_mask(frame, landmarks, &face, &settings.mask_spec())?;
-        let mask =
-            compose(self.box_mask(size, settings.mask_blur, settings.mask_padding), size, model_mask.as_deref().map(|m| (m, MASK_SIZE)));
-        match_color(&mut face.pixels, &original, &mask, settings.color_correction);
+        let model_mask = self.masker.face_mask(index, frame, target, &original, &face, live)?;
+        let PasteMask { mask, resampled } = &mut self.paste_mask;
+        let box_mask = self.box_masks.get(size, settings.mask_blur, settings.mask_padding);
+        compose_into(box_mask, size, model_mask.map(|m| (m, MASK_SIZE)), mask, resampled);
+        match_color(&mut face.pixels, &original, mask, settings.color_correction);
         stats.mask_ms += elapsed_ms(mask_started);
 
-        paste(frame, &face, &mask, 1.0);
-        Ok(model_mask)
+        paste(frame, &face, mask, 1.0);
+        Ok(())
     }
 
     fn detect(&mut self, frame: &Frame, settings: &Settings, live: bool) -> Result<Vec<Face>> {
@@ -202,18 +231,6 @@ impl Processor {
             self.smoother.reset();
         }
         Ok(faces)
-    }
-
-    fn box_mask(&mut self, size: usize, blur: f32, padding: Padding) -> &[f32] {
-        let key = (size, blur.to_bits(), padding.map(f32::to_bits));
-        let entry = if let Some(i) = self.masks.iter().position(|(k, _)| *k == key) {
-            self.masks.remove(i).expect("index in range")
-        } else {
-            self.masks.truncate(MASK_CACHE - 1);
-            (key, box_mask(size, blur, padding))
-        };
-        self.masks.push_front(entry);
-        &self.masks[0].1
     }
 }
 
