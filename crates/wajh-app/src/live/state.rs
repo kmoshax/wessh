@@ -37,6 +37,8 @@ pub(super) struct Shared {
     pub settings: Mutex<Settings>,
     pub snapshot: Mutex<Snapshot>,
     pub preview: Mutex<Option<Image>>,
+    /// A preview pixel buffer the UI is done with, for the presenter to refill.
+    pub recycled: Mutex<Option<Vec<u8>>>,
     pub source_thumbnail: Mutex<Option<Image>>,
 }
 
@@ -46,6 +48,7 @@ impl Shared {
             settings: Mutex::new(settings),
             snapshot: Mutex::new(Snapshot::default()),
             preview: Mutex::new(None),
+            recycled: Mutex::new(None),
             source_thumbnail: Mutex::new(None),
         }
     }

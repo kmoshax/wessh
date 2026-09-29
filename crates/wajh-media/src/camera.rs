@@ -5,7 +5,6 @@ use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
-use wajh_core::Frame;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CameraConfig {
@@ -63,7 +62,7 @@ impl Camera {
         let (width, height, stopped) = (config.width, config.height, stop.clone());
         let reader = std::thread::Builder::new().name("capture".into()).spawn(move || {
             while !stopped.load(Ordering::Relaxed) {
-                let mut frame = Frame::new(width, height);
+                let mut frame = output.spare(width, height);
                 if stdout.read_exact(&mut frame.data).is_err() {
                     break;
                 }
