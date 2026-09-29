@@ -2,6 +2,7 @@
 
 mod cli;
 mod commands;
+mod jobs;
 mod live;
 mod ui;
 

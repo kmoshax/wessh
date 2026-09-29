@@ -31,13 +31,16 @@ const BOOST_SIZES: [usize; 4] = [128, 256, 384, 512];
 
 pub(super) fn swap(ui: &mut Ui, frame: &mut Frame<'_>) {
     let settings = &mut *frame.settings;
+    let live = !frame.offline;
     section(ui, icons::SWAP_HORIZ, "Swap", |ui| {
         ui.add(Dropdown::new("Model", &mut settings.swap_model, &MODELS).icon(icons::MEMORY));
         pixel_boost(ui, settings.swap_model.resolution(), &mut settings.pixel_boost);
         switch_row(ui, icons::GROUPS, "All faces", "Swap every face, not just the first", &mut settings.many_faces);
         ui.add(Dropdown::new("Face order", &mut settings.face_order, &FACE_ORDERS).icon(icons::SORT));
-        switch_row(ui, icons::FLIP, "Mirror", "Flip the picture like a selfie camera", &mut settings.mirror);
-        switch_row(ui, icons::CENTER_FOCUS_STRONG, "Stabilise", "Smooth landmark jitter between frames", &mut settings.stabilize);
+        if live {
+            switch_row(ui, icons::FLIP, "Mirror", "Flip the picture like a selfie camera", &mut settings.mirror);
+            switch_row(ui, icons::CENTER_FOCUS_STRONG, "Stabilise", "Smooth landmark jitter between frames", &mut settings.stabilize);
+        }
         caption(ui, "Detector size");
         ui.add(SegmentedButton::new(&mut settings.detector_size, &DETECTOR_SIZES));
     });

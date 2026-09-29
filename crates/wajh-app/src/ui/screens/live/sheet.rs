@@ -1,6 +1,7 @@
 //! The settings side sheet: docked beside the preview on wide windows, modal on narrow ones.
 
-use super::{Frame, sections};
+use super::Frame;
+use super::sections::Section;
 use crate::ui::components::IconButton;
 use crate::ui::icons;
 use crate::ui::theme::{self, Elevation, TypeRole, motion, spacing};
@@ -24,15 +25,15 @@ pub fn split(content: Rect) -> (Rect, Rect) {
 }
 
 /// Draw the sheet docked in `rect`.
-pub fn docked(ui: &mut Ui, rect: Rect, frame: &mut Frame<'_>) {
+pub fn docked(ui: &mut Ui, rect: Rect, frame: &mut Frame<'_>, sections: &[Section]) {
     ui.scope_builder(UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)), |ui| {
-        scroll_sections(ui, "docked-sheet", frame);
+        scroll_sections(ui, "docked-sheet", frame, sections);
     });
 }
 
 /// Draw the sheet as a modal from the window's right edge, sliding in and out as
 /// `open` changes. Clicking the scrim or the close button clears `open`.
-pub fn modal(ctx: &Context, frame: &mut Frame<'_>, open: &mut bool) {
+pub fn modal(ctx: &Context, frame: &mut Frame<'_>, open: &mut bool, sections: &[Section]) {
     let colors = theme::colors(ctx);
     let id = Id::new("modal-sheet");
     let t = ctx.animate_bool_with_time_and_easing(id, *open, motion::MEDIUM_4, motion::emphasized);
@@ -66,15 +67,15 @@ pub fn modal(ctx: &Context, frame: &mut Frame<'_>, open: &mut bool) {
                         *open &= !ui.add(IconButton::new(icons::CLOSE, "Close")).clicked();
                     });
                 });
-                scroll_sections(ui, "modal-sheet", frame);
+                scroll_sections(ui, "modal-sheet", frame, sections);
             });
     });
 }
 
-fn scroll_sections(ui: &mut Ui, id: &str, frame: &mut Frame<'_>) {
+fn scroll_sections(ui: &mut Ui, id: &str, frame: &mut Frame<'_>, sections: &[Section]) {
     ScrollArea::vertical().id_salt(id).auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = spacing::MD;
-        for section in sections::ALL {
+        for section in sections {
             section(ui, frame);
         }
         ui.add_space(spacing::LG);

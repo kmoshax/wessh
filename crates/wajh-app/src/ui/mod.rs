@@ -1,5 +1,5 @@
-//! Desktop UI (egui), styled after Material Design 3. Talks to the worker only through
-//! [`LiveSession`].
+//! Desktop UI (egui), styled after Material Design 3. Talks to the live worker only through
+//! [`LiveSession`] and to the offline (photo / video) worker only through [`JobRunner`].
 //!
 //! - [`theme`]: HCT colour scheme, type scale, tokens and the egui style mapping.
 //! - [`components`]: reusable MD3 widgets.
@@ -10,14 +10,18 @@ mod components;
 mod file_picker;
 mod icons;
 mod screens;
+mod task;
 mod theme;
 
 use crate::cli::Options;
+use crate::jobs::JobRunner;
 use crate::live::{EngineOptions, LiveSession, Phase, Snapshot};
 use components::navigation::{RAIL_WIDTH, TOP_APP_BAR_HEIGHT};
 use components::{Chip, IconButton, drop_overlay, navigation_rail, top_app_bar};
 use eframe::egui::{self, CentralPanel, Context, Key, Margin, SidePanel, TopBottomPanel};
-use screens::{LiveScreen, Screen, offline_screen};
+use file_picker::{IMAGE_EXTENSIONS, has_extension};
+use screens::{ImageScreen, LiveScreen, Screen, VideoScreen};
+use std::path::PathBuf;
 use theme::{Brightness, ThemeConfig, spacing};
 
 const INITIAL_WINDOW: [f32; 2] = [1320.0, 840.0];
@@ -44,8 +48,10 @@ pub fn run(options: Options) -> anyhow::Result<()> {
         Box::new(move |cc| {
             let engine = EngineOptions { runtime: options.ort.clone(), device: options.device };
             let ctx = cc.egui_ctx.clone();
-            let session = LiveSession::spawn(engine, options.settings(), move || ctx.request_repaint());
-            Ok(Box::new(App::new(&cc.egui_ctx, session)))
+            let session = LiveSession::spawn(engine.clone(), options.settings(), move || ctx.request_repaint());
+            let ctx = cc.egui_ctx.clone();
+            let jobs = JobRunner::spawn(engine, move || ctx.request_repaint());
+            Ok(Box::new(App::new(&cc.egui_ctx, session, jobs)))
         }),
     )
     .map_err(|e| anyhow::anyhow!("{e}"))
@@ -53,24 +59,48 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 
 struct App {
     session: LiveSession,
+    jobs: JobRunner,
     theme: ThemeConfig,
     screen: Screen,
     live: LiveScreen,
+    image: ImageScreen,
+    video: VideoScreen,
     capture: Option<capture::Capture>,
 }
 
 impl App {
-    fn new(ctx: &Context, session: LiveSession) -> Self {
+    fn new(ctx: &Context, session: LiveSession, jobs: JobRunner) -> Self {
         let dev = capture::DevOptions::from_env();
         let brightness = if dev.light { Brightness::Light } else { Brightness::Dark };
         let theme = ThemeConfig { brightness, ..ThemeConfig::default() };
         theme::install_fonts(ctx);
         theme::apply(ctx, theme);
-        let mut live = LiveScreen::default();
+        let mut app = Self {
+            session,
+            jobs,
+            theme,
+            screen: dev.screen,
+            live: LiveScreen::default(),
+            image: ImageScreen::default(),
+            video: VideoScreen::default(),
+            capture: dev.capture,
+        };
         if let Some(source) = dev.source {
-            live.request_source(ctx, &session, &Snapshot::default(), source);
+            app.live.request_source(ctx, &app.session, &Snapshot::default(), source);
         }
-        Self { session, theme, screen: dev.screen, live, capture: dev.capture }
+        if let Some(target) = dev.target {
+            app.open_target(ctx, target);
+        }
+        if let Some(output) = dev.output {
+            app.video.set_output(&output);
+        }
+        if dev.loopback_missing {
+            app.live.pretend_loopback_missing();
+        }
+        if dev.render {
+            app.video.render_when_ready();
+        }
+        app
     }
 
     fn toggle_brightness(&mut self, ctx: &Context) {
@@ -78,12 +108,32 @@ impl App {
         theme::apply(ctx, self.theme);
     }
 
-    /// Dropped image files become the source face.
+    /// Give a photo or video to the screen that works on it.
+    fn open_target(&mut self, ctx: &Context, path: PathBuf) {
+        match self.screen {
+            Screen::Video => self.video.set_target(ctx, path),
+            Screen::Image | Screen::Live => self.image.set_target(ctx, path),
+        }
+    }
+
+    /// Live: dropped photos become the source face. Image / Video: dropped files become the
+    /// target, except photos dropped on the Video screen, which become the source face.
     fn handle_drops(&mut self, ctx: &Context, snapshot: &Snapshot) {
         let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
-        if let Some(path) = dropped {
-            self.live.request_source(ctx, &self.session, snapshot, path);
-            self.screen = Screen::Live;
+        let Some(path) = dropped else { return };
+        match self.screen {
+            Screen::Image => self.image.set_target(ctx, path),
+            Screen::Video if !has_extension(&path, &IMAGE_EXTENSIONS) => self.video.set_target(ctx, path),
+            Screen::Live | Screen::Video => self.live.request_source(ctx, &self.session, snapshot, path),
+        }
+    }
+
+    /// What the drop overlay promises on the current screen.
+    fn drop_copy(&self) -> (&'static str, &'static str) {
+        match self.screen {
+            Screen::Live => ("Drop to use this face", "The photo becomes the source face"),
+            Screen::Image => ("Drop to swap this photo", "The source face is put into it"),
+            Screen::Video => ("Drop a video to render", "Or a photo to use as the source face"),
         }
     }
 
@@ -105,7 +155,7 @@ impl App {
                 ui.spacing_mut().item_spacing.x = spacing::SM;
                 let (icon, tip) = if colors.is_dark() { (icons::LIGHT_MODE, "Light theme") } else { (icons::DARK_MODE, "Dark theme") };
                 toggle_theme = ui.add(IconButton::new(icon, tip)).clicked();
-                if !expanded && self.screen == Screen::Live {
+                if !expanded {
                     toggle_sheet = ui.add(IconButton::new(icons::TUNE, "Settings")).clicked();
                 }
                 backend_chip(ui, snapshot);
@@ -153,15 +203,21 @@ impl eframe::App for App {
         let colors = theme::colors(ctx);
         let margin = Margin { left: 0, right: spacing::XL as i8, top: 0, bottom: spacing::XL as i8 };
         CentralPanel::default().frame(egui::Frame::new().fill(colors.surface).inner_margin(margin)).show(ctx, |ui| {
-            let rect = ui.available_rect_before_wrap();
+            let (session, jobs) = (&self.session, &self.jobs);
             match self.screen {
-                Screen::Live => self.live.ui(ui, &self.session, &snapshot, expanded),
-                other => offline_screen(ui, rect, other),
+                Screen::Live => self.live.ui(ui, session, &snapshot, expanded),
+                Screen::Image => {
+                    self.live.show(ui, session, &snapshot, expanded, true, |ui, rect, frame| self.image.ui(ui, rect, frame, jobs));
+                }
+                Screen::Video => {
+                    self.live.show(ui, session, &snapshot, expanded, true, |ui, rect, frame| self.video.ui(ui, rect, frame, jobs));
+                }
             }
         });
 
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
-        drop_overlay(ctx, ctx.content_rect(), "Drop to use this face", "The photo becomes the source face", hovering);
+        let (title, body) = self.drop_copy();
+        drop_overlay(ctx, ctx.content_rect(), title, body, hovering);
         if let Some(capture) = &mut self.capture {
             capture.update(ctx, &snapshot.phase);
         }

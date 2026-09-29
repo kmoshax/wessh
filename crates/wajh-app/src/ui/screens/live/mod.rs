@@ -1,22 +1,31 @@
 //! The Live screen: camera preview in the main pane, settings in a supporting side sheet.
+//!
+//! The sheet (source face and swap settings) is shared with the Image and Video screens
+//! through [`LiveScreen::show`], so all three use the same face and settings.
 
 mod preview;
-mod sections;
+pub mod sections;
 mod sheet;
 
 use crate::live::{Image, LiveSession, Phase, Snapshot};
 use crate::ui::components::Snackbar;
-use crate::ui::file_picker::{FilePicker, Intake};
+use crate::ui::file_picker::{Dialog, FilePicker, Intake};
+use crate::ui::task::Task;
 use eframe::egui::{self, ColorImage, Context, Rect, TextureHandle, TextureOptions, Ui};
+use sections::Section;
 use std::path::PathBuf;
 use wajh_core::Settings;
-use wajh_media::{CameraConfig, OutputTarget};
+use wajh_media::{CameraConfig, Devices, LoopbackStatus, OutputTarget, list_devices};
 
 /// Camera and output choices made in the UI (applied on the next Start).
 pub struct LiveForm {
     pub camera: CameraConfig,
+    /// The camera device is typed rather than picked from the discovered list.
+    pub camera_custom: bool,
     pub output_enabled: bool,
     pub output_target: String,
+    /// The output target is typed rather than picked from the discovered list.
+    pub output_custom: bool,
     /// Typed source path, used only where neither a file dialog nor drag-and-drop exists.
     pub source_path: String,
 }
@@ -25,9 +34,31 @@ impl Default for LiveForm {
     fn default() -> Self {
         Self {
             camera: CameraConfig::default(),
+            camera_custom: false,
             output_enabled: false,
             output_target: OutputTarget::default_for_platform().as_str().to_owned(),
+            output_custom: false,
             source_path: String::new(),
+        }
+    }
+}
+
+impl LiveForm {
+    /// After a scan, move defaults that don't exist on this machine to the first real device.
+    fn adopt(&mut self, devices: &Devices) {
+        if !self.camera_custom
+            && !devices.cameras.iter().any(|d| d.id == self.camera.device)
+            && let Some(first) = devices.cameras.first()
+        {
+            self.camera.device.clone_from(&first.id);
+        }
+        let is_default_output = self.output_target == OutputTarget::default_for_platform().as_str();
+        if !self.output_custom
+            && is_default_output
+            && !devices.outputs.iter().any(|d| d.id == self.output_target)
+            && let Some(first) = devices.outputs.first()
+        {
+            self.output_target.clone_from(&first.id);
         }
     }
 }
@@ -38,6 +69,9 @@ pub enum Action {
     PickSource,
     LoadSource(PathBuf),
     ToggleLive,
+    RefreshDevices,
+    /// Show a snackbar message.
+    Notify(String),
 }
 
 /// Everything a pane needs to draw one frame.
@@ -50,6 +84,12 @@ pub struct Frame<'a> {
     /// A source photo is being processed by the worker.
     pub source_pending: bool,
     pub intake: Intake,
+    /// Cameras and virtual cameras found by the last scan.
+    pub devices: Option<&'a Devices>,
+    /// A device scan is running.
+    pub scanning: bool,
+    /// Drawn for the Image or Video screen: hide live-only options.
+    pub offline: bool,
     pub actions: Vec<Action>,
 }
 
@@ -71,7 +111,7 @@ struct PendingSource {
     since: f64,
 }
 
-/// State of the Live screen that persists between frames.
+/// State of the Live screen (and the shared settings sheet) that persists between frames.
 #[derive(Default)]
 pub struct LiveScreen {
     preview: Option<TextureHandle>,
@@ -81,12 +121,16 @@ pub struct LiveScreen {
     last_notice: Option<String>,
     picker: FilePicker,
     pending_source: Option<PendingSource>,
+    devices: Option<Devices>,
+    scan: Task<Devices>,
+    /// See [`LiveScreen::pretend_loopback_missing`].
+    loopback_missing: bool,
     /// Modal side sheet open (compact layouts only).
     sheet_open: bool,
 }
 
 impl LiveScreen {
-    /// Pull new frames, thumbnails and notices from the session.
+    /// Pull new frames, thumbnails, notices and device lists.
     pub fn sync(&mut self, ctx: &Context, session: &LiveSession, snapshot: &Snapshot) {
         if let Some(image) = session.take_preview() {
             upload(ctx, &mut self.preview, "preview", &image);
@@ -99,12 +143,33 @@ impl LiveScreen {
         if snapshot.notice != self.last_notice {
             self.last_notice.clone_from(&snapshot.notice);
             if let Some(notice) = &snapshot.notice {
-                self.snackbar.show(notice.clone(), ctx.input(|i| i.time));
+                self.notify(ctx, notice.clone());
             }
         }
         if let Some(path) = self.picker.take() {
             self.request_source(ctx, session, snapshot, path);
         }
+        if self.devices.is_none() && !self.scan.is_running() {
+            self.scan.spawn(ctx, list_devices);
+        }
+        if let Some(mut devices) = self.scan.poll() {
+            if self.loopback_missing {
+                devices.outputs.clear();
+                devices.loopback = LoopbackStatus::NotLoaded;
+            }
+            self.form.adopt(&devices);
+            self.devices = Some(devices);
+        }
+    }
+
+    /// Design review: report v4l2loopback as not loaded whatever the scan finds.
+    pub fn pretend_loopback_missing(&mut self) {
+        self.loopback_missing = true;
+    }
+
+    /// Show a snackbar message.
+    pub fn notify(&mut self, ctx: &Context, message: String) {
+        self.snackbar.show(message, ctx.input(|i| i.time));
     }
 
     /// Send a source photo to the worker and show progress until it answers.
@@ -132,8 +197,24 @@ impl LiveScreen {
         self.sheet_open = !self.sheet_open;
     }
 
-    /// Draw the screen into `ui`; `expanded` selects the two-pane layout.
+    /// Draw the Live screen into `ui`; `expanded` selects the two-pane layout.
     pub fn ui(&mut self, ui: &mut Ui, session: &LiveSession, snapshot: &Snapshot, expanded: bool) {
+        self.show(ui, session, snapshot, expanded, false, preview::pane);
+    }
+
+    /// Draw `content` beside the settings sheet (docked when `expanded`, modal otherwise);
+    /// `offline` drops the camera, output and live-only options for the Image and Video
+    /// screens. `content` gets the rect left of the sheet and the shared frame.
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        session: &LiveSession,
+        snapshot: &Snapshot,
+        expanded: bool,
+        offline: bool,
+        content: impl FnOnce(&mut Ui, Rect, &mut Frame<'_>),
+    ) {
+        let sections: &[Section] = if offline { &sections::OFFLINE } else { &sections::LIVE };
         let mut settings = session.settings();
         let mut frame = Frame {
             snapshot,
@@ -143,20 +224,22 @@ impl LiveScreen {
             source: self.source.as_ref(),
             source_pending: self.pending_source.is_some(),
             intake: Intake::detect(self.picker.is_open()),
+            devices: self.devices.as_ref(),
+            scanning: self.scan.is_running(),
+            offline,
             actions: Vec::new(),
         };
-        let content = ui.available_rect_before_wrap();
-        let preview_rect = if expanded {
-            let (preview_rect, sheet_rect) = sheet::split(content);
-            sheet::docked(ui, sheet_rect, &mut frame);
-            preview_rect
+        let area = ui.available_rect_before_wrap();
+        let content_rect = if expanded {
+            let (content_rect, sheet_rect) = sheet::split(area);
+            sheet::docked(ui, sheet_rect, &mut frame, sections);
+            content_rect
         } else {
-            content
+            area
         };
-        preview::pane(ui, preview_rect, &mut frame);
+        content(ui, content_rect, &mut frame);
         self.sheet_open &= !expanded;
-        sheet::modal(ui.ctx(), &mut frame, &mut self.sheet_open);
-        self.snackbar.ui(ui, preview_rect);
+        sheet::modal(ui.ctx(), &mut frame, &mut self.sheet_open, sections);
 
         let actions = std::mem::take(&mut frame.actions);
         if settings != session.settings() {
@@ -165,6 +248,7 @@ impl LiveScreen {
         for action in actions {
             self.run(ui.ctx(), session, snapshot, action);
         }
+        self.snackbar.ui(ui, content_rect);
     }
 
     /// Start or stop the camera.
@@ -183,15 +267,22 @@ impl LiveScreen {
         match action {
             Action::PickSource => {
                 let ctx = ctx.clone();
-                self.picker.open(move || ctx.request_repaint());
+                self.picker.open(Dialog::SourceImage, move || ctx.request_repaint());
             }
             Action::LoadSource(path) => self.request_source(ctx, session, snapshot, path),
             Action::ToggleLive => self.toggle_live(session, snapshot),
+            Action::RefreshDevices => {
+                if !self.scan.is_running() {
+                    self.scan.spawn(ctx, list_devices);
+                }
+            }
+            Action::Notify(message) => self.notify(ctx, message),
         }
     }
 }
 
-fn upload(ctx: &Context, slot: &mut Option<TextureHandle>, name: &str, image: &Image) {
+/// Upload `image` into `slot`, creating the texture on first use.
+pub fn upload(ctx: &Context, slot: &mut Option<TextureHandle>, name: &str, image: &Image) {
     let pixels = ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.rgba);
     match slot {
         Some(texture) => texture.set(pixels, TextureOptions::LINEAR),

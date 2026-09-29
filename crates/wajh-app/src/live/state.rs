@@ -28,6 +28,8 @@ pub struct Snapshot {
     pub backend: String,
     pub has_source: bool,
     pub source_name: Option<String>,
+    /// The accepted source photo, for offline jobs to load the same face.
+    pub source_path: Option<std::path::PathBuf>,
     pub stats: Stats,
     pub fps: f32,
     pub output_active: bool,

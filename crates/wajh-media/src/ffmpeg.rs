@@ -5,9 +5,14 @@ fn program(var: &str, default: &str) -> String {
     std::env::var(var).unwrap_or_else(|_| default.to_owned())
 }
 
+/// `ffmpeg` (or `$WAJH_FFMPEG`) without any arguments.
+pub fn ffmpeg_program() -> Command {
+    Command::new(program("WAJH_FFMPEG", "ffmpeg"))
+}
+
 /// `ffmpeg` (or `$WAJH_FFMPEG`) with quiet, non-interactive defaults.
 pub fn ffmpeg() -> Command {
-    let mut cmd = Command::new(program("WAJH_FFMPEG", "ffmpeg"));
+    let mut cmd = ffmpeg_program();
     cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin"]).stderr(Stdio::inherit());
     cmd
 }

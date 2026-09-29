@@ -5,7 +5,8 @@ use crate::ui::icons;
 use crate::ui::theme::{self, TypeRole, motion, shape, size, spacing};
 use eframe::egui::{Align2, Color32, CursorIcon, Response, Sense, Stroke, StrokeKind, Ui, Vec2, Widget, WidgetInfo, WidgetType, pos2};
 
-const HEIGHT: f32 = 32.0;
+/// Height of every chip.
+pub const HEIGHT: f32 = 32.0;
 const PADDING: f32 = spacing::LG;
 const PADDING_WITH_ICON: f32 = spacing::SM;
 const ICON_GAP: f32 = spacing::SM;

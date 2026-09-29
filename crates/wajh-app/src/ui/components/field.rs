@@ -132,7 +132,16 @@ impl<T: PartialEq + Copy> Widget for Dropdown<'_, T> {
         let open = popup.is_open();
         let value_rect = shell(ui, rect, &response, self.label, self.icon, open);
         let text_color = colors.on_surface;
-        paint::text(ui, value_rect.left_center(), Align2::LEFT_CENTER, TypeRole::BodyLarge, selected_label, text_color);
+        let value_width = value_rect.width() - size::ICON - ICON_GAP; // leave room for the arrow
+        paint::text_truncated(
+            ui,
+            value_rect.left_center(),
+            Align2::LEFT_CENTER,
+            TypeRole::BodyLarge,
+            selected_label,
+            text_color,
+            value_width,
+        );
         let arrow = pos2(rect.right() - PADDING_X - size::ICON / 2.0, rect.center().y);
         let glyph = if open { icons::ARROW_DROP_UP } else { icons::ARROW_DROP_DOWN };
         paint::icon(ui.painter(), arrow, glyph, size::ICON, colors.on_surface_variant, false);
@@ -183,6 +192,7 @@ pub fn menu_item(ui: &mut Ui, label: &str, selected: bool) -> Response {
         paint::icon(ui.painter(), icon_center, icons::CHECK, size::ICON, content, false);
     }
     x += size::ICON + spacing::MD;
-    paint::text(ui, pos2(x, rect.center().y), Align2::LEFT_CENTER, TypeRole::LabelLarge, label, content);
+    let width = rect.right() - x - spacing::MD;
+    paint::text_truncated(ui, pos2(x, rect.center().y), Align2::LEFT_CENTER, TypeRole::LabelLarge, label, content, width);
     response
 }

@@ -4,8 +4,9 @@ use super::{Action, Frame};
 use crate::live::Phase;
 use crate::ui::components::{Button, Chip, CircularProgress, ExtendedFab, FabColor, empty_state, feedback::PROGRESS_SIZE, paint};
 use crate::ui::icons;
+use crate::ui::screens::layout::centered;
 use crate::ui::theme::{self, TypeRole, shape, spacing};
-use eframe::egui::{Align, Align2, Id, Layout, Rect, TextureHandle, Ui, UiBuilder, Vec2, pos2, vec2};
+use eframe::egui::{Align, Align2, Layout, Rect, TextureHandle, Ui, UiBuilder, Vec2, pos2, vec2};
 
 /// Inset of overlay chips and the FAB from the pane edges.
 const OVERLAY_INSET: f32 = spacing::LG;
@@ -28,19 +29,6 @@ pub fn pane(ui: &mut Ui, rect: Rect, frame: &mut Frame<'_>) {
     }
     if matches!(frame.snapshot.phase, Phase::Ready | Phase::Live) {
         start_stop_fab(ui, rect, frame);
-    }
-}
-
-/// Place content of unknown height centred in `rect`, using last frame's measured height.
-fn centered(ui: &mut Ui, rect: Rect, id: &str, add: impl FnOnce(&mut Ui)) {
-    let id = Id::new(id);
-    let height: f32 = ui.ctx().data(|d| d.get_temp(id)).unwrap_or_default();
-    let top = rect.center().y - height / 2.0;
-    let child = Rect::from_min_max(pos2(rect.left(), top.max(rect.top())), rect.max);
-    let used = ui.scope_builder(UiBuilder::new().max_rect(child).layout(Layout::top_down(Align::Center)), add).response.rect;
-    if (used.height() - height).abs() > 0.5 {
-        ui.ctx().data_mut(|d| d.insert_temp(id, used.height()));
-        ui.ctx().request_repaint();
     }
 }
 

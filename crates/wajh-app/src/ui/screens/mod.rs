@@ -1,10 +1,13 @@
 //! Top-level destinations shown on the navigation rail.
 
+mod image;
+pub mod layout;
 pub mod live;
-mod offline;
+mod video;
 
+pub use image::ImageScreen;
 pub use live::LiveScreen;
-pub use offline::offline_screen;
+pub use video::VideoScreen;
 
 use crate::ui::components::Destination;
 use crate::ui::icons;

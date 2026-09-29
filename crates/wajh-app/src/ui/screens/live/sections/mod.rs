@@ -15,8 +15,8 @@ use eframe::egui::{Align, Label, Layout, Sense, Ui, Vec2, vec2};
 /// A settings section.
 pub type Section = fn(&mut Ui, &mut Frame<'_>);
 
-/// Sections in display order.
-pub const ALL: [Section; 10] = [
+/// Sections of the Live screen, in display order.
+pub const LIVE: [Section; 10] = [
     input::source,
     input::camera,
     input::output,
@@ -29,12 +29,21 @@ pub const ALL: [Section; 10] = [
     swap::enhance,
 ];
 
+/// Sections of the Image and Video screens: no camera or output.
+pub const OFFLINE: [Section; 8] =
+    [input::source, swap::swap, swap::mask, quality::occlusion, quality::regions, quality::mouth, quality::color, swap::enhance];
+
 const HEADER_HEIGHT: f32 = 40.0;
 
 /// A card with an icon + title header and `body` below.
 fn section(ui: &mut Ui, icon: char, title: &str, body: impl FnOnce(&mut Ui)) {
+    section_with(ui, icon, title, |_| {}, body);
+}
+
+/// [`section`] with `trailing` controls (e.g. a refresh button) at the end of the header.
+fn section_with(ui: &mut Ui, icon: char, title: &str, trailing: impl FnOnce(&mut Ui), body: impl FnOnce(&mut Ui)) {
     Card::elevated().show(ui, |ui| {
-        header(ui, icon, title, |_| {});
+        header(ui, icon, title, trailing);
         body(ui);
     });
 }
