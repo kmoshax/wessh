@@ -74,8 +74,9 @@ pub fn has_tensorrt_runtime(cuda_dir: Option<&Path>) -> bool {
 #[allow(clippy::must_use_candidate, reason = "the count is diagnostic; loading is the point")]
 pub fn preload_libraries(dir: &Path) -> usize {
     let is_library = |p: &Path| {
-        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        name.contains(".so") || name.ends_with(".dll") || name.ends_with(".dylib")
+        let name = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        let extension = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+        name.contains(".so") || matches!(extension.as_deref(), Some("dll" | "dylib"))
     };
     let mut pending: Vec<PathBuf> =
         std::fs::read_dir(dir).map(|entries| entries.flatten().map(|e| e.path()).filter(|p| is_library(p)).collect()).unwrap_or_default();

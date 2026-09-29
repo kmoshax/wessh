@@ -12,7 +12,7 @@ fn varint(buf: &[u8], pos: &mut usize) -> Result<u64> {
     for shift in (0..64).step_by(7) {
         let b = *buf.get(*pos).ok_or_else(|| invalid("truncated varint"))?;
         *pos += 1;
-        out |= ((b & 0x7f) as u64) << shift;
+        out |= u64::from(b & 0x7f) << shift;
         if b & 0x80 == 0 {
             return Ok(out);
         }
@@ -68,9 +68,9 @@ pub struct Initializer {
 }
 
 fn f16_to_f32(h: u16) -> f32 {
-    let sign = ((h >> 15) as u32) << 31;
-    let exp = ((h >> 10) & 0x1f) as u32;
-    let frac = (h & 0x3ff) as u32;
+    let sign = u32::from(h >> 15) << 31;
+    let exp = u32::from((h >> 10) & 0x1f);
+    let frac = u32::from(h & 0x3ff);
     let bits = match exp {
         0 if frac == 0 => sign,
         0 => {
@@ -102,15 +102,15 @@ fn parse_tensor(buf: &[u8]) -> Result<Initializer> {
             }
             (2, Value::Varint(t)) => dtype = t,
             (4, Value::Bytes(packed)) => {
-                floats.extend(packed.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])));
+                floats.extend(packed.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)));
             }
             (9, Value::Bytes(r)) => raw = Some(r),
             _ => {}
         }
     }
     let data = match (dtype, raw) {
-        (1, Some(r)) => r.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect(),
-        (10, Some(r)) => r.chunks_exact(2).map(|c| f16_to_f32(u16::from_le_bytes([c[0], c[1]]))).collect(),
+        (1, Some(r)) => r.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect(),
+        (10, Some(r)) => r.as_chunks::<2>().0.iter().map(|c| f16_to_f32(u16::from_le_bytes(*c))).collect(),
         (1, None) => floats,
         (t, _) => return Err(invalid(&format!("unsupported initializer dtype {t}"))),
     };

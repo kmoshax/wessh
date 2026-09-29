@@ -74,7 +74,7 @@ impl FaceSmoother {
             let scale = face.size().max(1.0);
             let track = self.track_for(centroid(face), scale);
             // Filter in face-size units so behaviour doesn't depend on resolution or distance.
-            for (point, filters) in face.landmarks.iter_mut().zip(track.filters.chunks_exact_mut(2)) {
+            for (point, filters) in face.landmarks.iter_mut().zip(track.filters.as_chunks_mut::<2>().0) {
                 for (coordinate, filter) in point.iter_mut().zip(filters) {
                     *coordinate = filter.filter(*coordinate / scale, dt) * scale;
                 }

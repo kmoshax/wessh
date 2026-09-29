@@ -24,7 +24,9 @@ pub fn gaussian_blur(plane: &mut [f32], width: usize, height: usize, sigma: f32)
     let radius = (sigma * 3.0).ceil() as isize;
     let mut kernel: Vec<f32> = (-radius..=radius).map(|i| (-(i * i) as f32 / (2.0 * sigma * sigma)).exp()).collect();
     let sum: f32 = kernel.iter().sum();
-    kernel.iter_mut().for_each(|k| *k /= sum);
+    for k in &mut kernel {
+        *k /= sum;
+    }
 
     let clamp = |v: isize, len: usize| v.clamp(0, len as isize - 1) as usize;
     let mut tmp = vec![0f32; width * height];
