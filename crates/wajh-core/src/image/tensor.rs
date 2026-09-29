@@ -1,8 +1,8 @@
 //! Conversions between BGR crops and NCHW `f32` tensors.
 
 use super::Frame;
-use crate::geometry::Rect;
 use super::sample::{Bgr, Tap};
+use crate::geometry::Rect;
 use rayon::prelude::*;
 
 /// `tensor = (pixel / 255 - mean) / std`, optionally swapping BGR → RGB.
@@ -52,7 +52,7 @@ pub fn to_nchw_into(crop: &[u8], size: usize, norm: Normalization, out: &mut [f3
 pub fn from_nchw(tensor: &[f32], size: usize, norm: Normalization) -> Vec<u8> {
     let plane = size * size;
     let mut out = vec![0u8; plane * 3];
-    for (i, px) in out.chunks_exact_mut(3).enumerate() {
+    for (i, px) in out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
         for (c, value) in px.iter_mut().enumerate() {
             let v = (tensor[norm.channel(c) * plane + i] * norm.std + norm.mean).clamp(0.0, 1.0);
             *value = (v * 255.0 + 0.5) as u8;
@@ -98,12 +98,8 @@ pub fn letterbox_region_nchw_into(frame: &Frame, region: Rect, size: usize, out:
 
     let (b, rest) = out.split_at_mut(plane);
     let (g, r) = rest.split_at_mut(plane);
-    b.par_chunks_exact_mut(size)
-        .zip(g.par_chunks_exact_mut(size))
-        .zip(r.par_chunks_exact_mut(size))
-        .take(height)
-        .enumerate()
-        .for_each(|(y, ((b, g), r))| {
+    b.par_chunks_exact_mut(size).zip(g.par_chunks_exact_mut(size)).zip(r.par_chunks_exact_mut(size)).take(height).enumerate().for_each(
+        |(y, ((b, g), r))| {
             let row_tap = Tap::new(top + (y as f32 + 0.5) * to_frame - 0.5, frame.height);
             for (x, &column_tap) in column_taps.iter().enumerate() {
                 let [pb, pg, pr] = image.sample_taps(column_tap, row_tap);
@@ -111,7 +107,8 @@ pub fn letterbox_region_nchw_into(frame: &Frame, region: Rect, size: usize, out:
                 g[x] = (pg - MEAN) / STD;
                 r[x] = (pr - MEAN) / STD;
             }
-        });
+        },
+    );
     to_frame
 }
 

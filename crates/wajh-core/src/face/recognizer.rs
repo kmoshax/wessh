@@ -1,8 +1,8 @@
+use crate::Result;
 use crate::assets;
 use crate::geometry::{Landmarks5, Template};
 use crate::image::{Frame, Normalization, to_nchw, warp_crop};
 use crate::runtime::{Engine, Input, Model};
-use crate::Result;
 
 const SIZE: usize = 112;
 

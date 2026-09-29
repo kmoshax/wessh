@@ -15,7 +15,17 @@ pub struct VideoInfo {
 /// Read the first video stream's geometry and frame rate.
 pub fn probe(path: &str) -> Result<VideoInfo> {
     let output = ffprobe()
-        .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,avg_frame_rate,nb_frames", "-of", "default=nw=1", path])
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,avg_frame_rate,nb_frames",
+            "-of",
+            "default=nw=1",
+            path,
+        ])
         .output()
         .map_err(|source| Error::Spawn { program: "ffprobe".into(), source })?;
     let text = String::from_utf8_lossy(&output.stdout);
@@ -73,7 +83,12 @@ impl Encoder {
     /// Fastest available: NVENC, `VideoToolbox`, else libx264.
     #[must_use]
     pub fn best_available() -> Self {
-        let listed = ffmpeg().arg("-encoders").stderr(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let listed = ffmpeg()
+            .arg("-encoders")
+            .stderr(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
         let nvidia = std::path::Path::new("/dev/nvidia0").exists() || cfg!(target_os = "windows");
         let name = if nvidia && listed.contains("h264_nvenc") {
             "h264_nvenc"

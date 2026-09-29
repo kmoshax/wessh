@@ -30,20 +30,14 @@ pub fn gaussian_blur(plane: &mut [f32], width: usize, height: usize, sigma: f32)
     let mut tmp = vec![0f32; width * height];
     for y in 0..height {
         for x in 0..width {
-            tmp[y * width + x] = kernel
-                .iter()
-                .enumerate()
-                .map(|(k, w)| plane[y * width + clamp(x as isize + k as isize - radius, width)] * w)
-                .sum();
+            tmp[y * width + x] =
+                kernel.iter().enumerate().map(|(k, w)| plane[y * width + clamp(x as isize + k as isize - radius, width)] * w).sum();
         }
     }
     for y in 0..height {
         for x in 0..width {
-            plane[y * width + x] = kernel
-                .iter()
-                .enumerate()
-                .map(|(k, w)| tmp[clamp(y as isize + k as isize - radius, height) * width + x] * w)
-                .sum();
+            plane[y * width + x] =
+                kernel.iter().enumerate().map(|(k, w)| tmp[clamp(y as isize + k as isize - radius, height) * width + x] * w).sum();
         }
     }
 }

@@ -1,3 +1,4 @@
+use super::tracker::{FaceTracker, TrackingDetector};
 use super::{FaceSmoother, Settings, Stats};
 use crate::face::{AlignedCrop, Detector, Embedding, Enhancer, Face, Recognizer, Swapper};
 use crate::image::{Frame, Padding, box_mask, paste_back};
@@ -19,6 +20,7 @@ pub struct Processor {
     /// `identity` converted for the current swapper.
     condition: Option<Vec<f32>>,
     smoother: FaceSmoother,
+    tracker: FaceTracker,
     masks: HashMap<MaskKey, Vec<f32>>,
     last_frame: Option<Instant>,
 }
@@ -34,6 +36,7 @@ impl Processor {
             identity: None,
             condition: None,
             smoother: FaceSmoother::default(),
+            tracker: FaceTracker::default(),
             masks: HashMap::new(),
             last_frame: None,
         })
@@ -66,6 +69,8 @@ impl Processor {
             self.condition = self.identity.as_ref().map(|id| swapper.condition(id));
             self.swapper = Some(swapper);
         }
+        self.detector.prepare(settings.detector_size)?;
+        self.detector.prepare(self.tracker.config.region_size)?;
         if settings.enhance && self.enhancer.is_none() {
             self.enhancer = Some(Enhancer::new(&self.engine)?);
         }
@@ -107,10 +112,16 @@ impl Processor {
 
     fn detect(&mut self, frame: &Frame, settings: &Settings, live: bool) -> Result<Vec<Face>> {
         self.detector.input_size = settings.detector_size;
-        let mut faces = self.detector.detect(frame)?;
-        if !settings.many_faces {
-            faces.truncate(1);
-        }
+        let limit = if settings.many_faces { usize::MAX } else { 1 };
+        let mut faces = if live {
+            let mut source = TrackingDetector { detector: &mut self.detector, region_size: self.tracker.config.region_size };
+            self.tracker.detect(&mut source, frame, limit)?.0
+        } else {
+            self.tracker.reset();
+            let mut faces = self.detector.detect(frame)?;
+            faces.truncate(limit);
+            faces
+        };
         let now = Instant::now();
         let dt = self.last_frame.map_or(1.0 / 30.0, |t| (now - t).as_secs_f32());
         self.last_frame = Some(now);

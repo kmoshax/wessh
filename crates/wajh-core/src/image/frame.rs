@@ -84,7 +84,9 @@ impl Frame {
 }
 
 fn swap_red_blue(data: &mut [u8]) {
-    data.chunks_exact_mut(3).for_each(|p| p.swap(0, 2));
+    for p in data.as_chunks_mut::<3>().0 {
+        p.swap(0, 2);
+    }
 }
 
 #[cfg(test)]

@@ -40,14 +40,13 @@ pub fn run(options: &Options, source: &Path, target: &Path, iterations: usize, p
     Ok(())
 }
 
+/// A named per-frame timing.
+type Stage = (&'static str, fn(&Stats) -> f32);
+
 /// p50 / p95 / max of every stage.
 fn print_percentiles(samples: &[Stats]) {
-    let stages: [(&str, fn(&Stats) -> f32); 4] = [
-        ("detect", |s| s.detect_ms),
-        ("swap", |s| s.swap_ms),
-        ("enhance", |s| s.enhance_ms),
-        ("total", |s| s.total_ms),
-    ];
+    let stages: [Stage; 4] =
+        [("detect", |s| s.detect_ms), ("swap", |s| s.swap_ms), ("enhance", |s| s.enhance_ms), ("total", |s| s.total_ms)];
     println!("{:<10} {:>8} {:>8} {:>8}", "stage", "p50", "p95", "max");
     for (name, stage) in stages {
         let mut values: Vec<f32> = samples.iter().map(stage).collect();
@@ -107,7 +106,7 @@ fn upscale(image: &Frame, width: usize, height: usize) -> Frame {
     let mut out = Frame::new(width, height);
     for (y, row) in out.data.chunks_exact_mut(width * Frame::CHANNELS).enumerate() {
         let sy = y * image.height / height;
-        for (x, px) in row.chunks_exact_mut(Frame::CHANNELS).enumerate() {
+        for (x, px) in row.as_chunks_mut::<{ Frame::CHANNELS }>().0.iter_mut().enumerate() {
             let sx = x * image.width / width;
             let at = (sy * image.width + sx) * Frame::CHANNELS;
             px.copy_from_slice(&image.data[at..at + Frame::CHANNELS]);

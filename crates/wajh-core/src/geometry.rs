@@ -8,11 +8,13 @@ pub type Landmarks5 = [Point; 5];
 pub struct Affine(pub [f32; 6]);
 
 impl Affine {
+    #[must_use]
     pub fn apply(&self, p: Point) -> Point {
         let m = &self.0;
         [m[0] * p[0] + m[1] * p[1] + m[2], m[3] * p[0] + m[4] * p[1] + m[5]]
     }
 
+    #[must_use]
     pub fn invert(&self) -> Affine {
         let [a, b, tx, c, d, ty] = self.0;
         let det = a * d - b * c;
@@ -23,6 +25,7 @@ impl Affine {
 
     /// Least-squares similarity transform (rotation + uniform scale + translation) from `src` to `dst`.
     /// Equivalent to OpenCV's `estimateAffinePartial2D` without outlier rejection.
+    #[must_use]
     pub fn similarity(src: &[Point], dst: &[Point]) -> Affine {
         let n = src.len() as f32;
         let (mut msx, mut msy, mut mdx, mut mdy) = (0.0, 0.0, 0.0, 0.0);
@@ -52,6 +55,7 @@ impl Affine {
     }
 
     /// Uniform scale factor of the transform.
+    #[must_use]
     pub fn scale(&self) -> f32 {
         (self.0[0] * self.0[0] + self.0[3] * self.0[3]).sqrt()
     }
@@ -93,6 +97,7 @@ pub enum Template {
 }
 
 impl Template {
+    #[must_use]
     pub fn points(self) -> Landmarks5 {
         match self {
             Template::Arcface112 => [
@@ -113,6 +118,7 @@ impl Template {
     }
 
     /// Transform mapping frame coordinates onto a `size`x`size` aligned crop.
+    #[must_use]
     pub fn align(self, landmarks: &Landmarks5, size: usize) -> Affine {
         let dst = self.points().map(|p| [p[0] * size as f32, p[1] * size as f32]);
         Affine::similarity(landmarks, &dst)

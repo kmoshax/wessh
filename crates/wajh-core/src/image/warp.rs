@@ -1,5 +1,5 @@
-use super::sample::Bgr;
 use super::Frame;
+use super::sample::Bgr;
 use crate::geometry::Affine;
 use rayon::prelude::*;
 
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn shrinking_averages_a_checkerboard_to_grey() {
         let mut frame = Frame::new(64, 64);
-        for (i, px) in frame.data.chunks_exact_mut(3).enumerate() {
+        for (i, px) in frame.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
             px.fill(if (i % 64 + i / 64) % 2 == 0 { 0 } else { 255 });
         }
         let crop = warp_crop(&frame, &Affine([0.25, 0.0, 0.0, 0.0, 0.25, 0.0]), 16);

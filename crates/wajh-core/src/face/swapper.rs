@@ -56,10 +56,12 @@ impl Swapper {
         };
         let norm = identity.norm();
         let mut out = vec![0f32; EMBEDDING_LEN];
-        for (value, row) in identity.0.iter().zip(map.chunks_exact(EMBEDDING_LEN)) {
+        for (value, row) in identity.0.iter().zip(map.as_chunks::<EMBEDDING_LEN>().0) {
             out.iter_mut().zip(row).for_each(|(o, w)| *o = value.mul_add(*w, *o));
         }
-        out.iter_mut().for_each(|o| *o /= norm);
+        for o in &mut out {
+            *o /= norm;
+        }
         out
     }
 
@@ -94,7 +96,7 @@ fn load_embedding_map(model_path: &Path) -> Result<Vec<f32>> {
     if let Ok(bytes) = std::fs::read(&cache)
         && bytes.len() == LEN * 4
     {
-        return Ok(bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect());
+        return Ok(bytes.as_chunks::<4>().0.iter().map(|&c| f32::from_le_bytes(c)).collect());
     }
     let initializer = proto::last_initializer(&std::fs::read(model_path)?)?;
     if initializer.data.len() != LEN {

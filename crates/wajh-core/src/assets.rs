@@ -77,10 +77,7 @@ impl SwapModel {
 /// Root of wajh's per-user data (`$WAJH_HOME`, or the platform data dir).
 #[must_use]
 pub fn data_dir() -> PathBuf {
-    std::env::var_os("WAJH_HOME").map_or_else(
-        || dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("wajh"),
-        PathBuf::from,
-    )
+    std::env::var_os("WAJH_HOME").map_or_else(|| dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")).join("wajh"), PathBuf::from)
 }
 
 #[must_use]

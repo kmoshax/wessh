@@ -1,5 +1,5 @@
-use super::sample::{Bgr, Plane, Tap};
 use super::Frame;
+use super::sample::{Bgr, Plane, Tap};
 use crate::geometry::Affine;
 use rayon::prelude::*;
 

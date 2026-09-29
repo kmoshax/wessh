@@ -1,9 +1,9 @@
 use super::AlignedCrop;
+use crate::Result;
 use crate::assets;
 use crate::geometry::{Landmarks5, Template};
 use crate::image::{Frame, Normalization, from_nchw, to_nchw_into, warp_crop_into};
 use crate::runtime::{Engine, StaticModel};
-use crate::Result;
 
 /// GPEN-BFR 256 face restoration.
 pub struct Enhancer {

@@ -48,7 +48,8 @@ pub struct StaticModel {
 }
 
 impl StaticModel {
-    pub(crate) fn new(session: Session, name: &'static str, placement: Placement) -> Result<Self> {
+    /// `output_shapes` supplies the shapes of outputs whose metadata is symbolic (by position).
+    pub(crate) fn new(session: Session, name: &'static str, placement: Placement, output_shapes: &[Vec<usize>]) -> Result<Self> {
         let (pinned, device) = match placement {
             Placement::Host => (None, None),
             Placement::Device => {
@@ -71,8 +72,11 @@ impl StaticModel {
             inputs.push(InputSlot { name: outlet.name().to_owned(), host: host_tensor, device: device_tensor, dirty: true });
         }
         let mut outputs = Vec::with_capacity(session.outputs().len());
-        for outlet in session.outputs() {
-            let dims = static_dims(outlet, name)?;
+        for (index, outlet) in session.outputs().iter().enumerate() {
+            let dims = match output_shapes.get(index) {
+                Some(dims) => dims.clone(),
+                None => static_dims(outlet, name)?,
+            };
             outputs.push(vec![0.0; dims.iter().product()]);
             binding.bind_output(outlet.name(), Tensor::<f32>::new(&default_allocator, dims.as_slice())?)?;
         }
