@@ -80,7 +80,7 @@ Run `wajh <command> --help` for every option.
 ```sh
 wajh                                              # desktop app
 wajh image -s me.jpg -t photo.jpg -o out.jpg      # swap faces in an image
-wajh video -s me.jpg -t clip.mp4 -o out.mp4 --enhance
+wajh video -s me.jpg -t clip.mp4 -o out.mp4
 wajh cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
 wajh cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
 wajh bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
@@ -93,9 +93,9 @@ Global options:
 
 | Option                                                  | Meaning                                          |
 | ------------------------------------------------------- | ------------------------------------------------ |
-| `--model inswapper\|hyperswap1a\|hyperswap1b\|hyperswap1c` | swap model (default `inswapper`)              |
+| `--model inswapper\|hyperswap1a\|hyperswap1b\|hyperswap1c` | swap model (default `hyperswap1a`)            |
 | `--device auto\|tensorrt\|cuda\|cpu`                     | inference backend (default `auto`)               |
-| `--enhance`                                             | restore detail with GPEN after swapping          |
+| `--enhance true\|false`                                 | GPEN face restoration (default on)               |
 | `--many-faces`                                          | swap every face, not only the largest            |
 | `--detector-size 320\|480\|640`                          | detector input; smaller is faster                |
 | `--ort <path>`                                          | use a specific ONNX Runtime library              |

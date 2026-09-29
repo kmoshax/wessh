@@ -62,14 +62,15 @@ impl OccluderModel {
     }
 }
 
-/// Face swap networks, fastest first.
+/// Face swap networks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum SwapModel {
     /// InsightFace inswapper, 128px, fp16.
-    #[default]
     Inswapper,
-    /// FaceFusion HyperSwap 1a, 256px.
+    /// FaceFusion HyperSwap 1a, 256px. The default: sharper than inswapper's 128px output and,
+    /// on NVIDIA GPUs, faster too (≈10 ms with TensorRT vs ≈22 ms).
+    #[default]
     Hyperswap1a,
     /// FaceFusion HyperSwap 1b, 256px.
     Hyperswap1b,

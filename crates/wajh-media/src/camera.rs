@@ -70,6 +70,19 @@ pub fn is_network_source(device: &str) -> bool {
     device.contains("://")
 }
 
+/// Path of the MJPEG stream in IP Webcam (Android); DroidCam serves the same path.
+const PHONE_STREAM_PATH: &str = "video";
+
+/// The stream to open for `device`. A bare phone-app address (`http://192.168.1.3:8080/`) is its
+/// control page, not video, so the app's stream path is appended.
+fn stream_url(device: &str) -> String {
+    let Some(rest) = device.strip_prefix("http://").or_else(|| device.strip_prefix("https://")) else {
+        return device.to_owned();
+    };
+    let bare = !rest.trim_end_matches('/').contains('/');
+    if bare { format!("{}/{PHONE_STREAM_PATH}", device.trim_end_matches('/')) } else { device.to_owned() }
+}
+
 /// ffmpeg arguments that open the camera, tuned for the lowest latency.
 fn input_args(config: &CameraConfig, os: &str) -> Vec<String> {
     let mut args: Vec<&str> = vec!["-fflags", "nobuffer", "-flags", "low_delay"];
@@ -82,8 +95,10 @@ fn input_args(config: &CameraConfig, os: &str) -> Vec<String> {
         } else if device.starts_with("http") {
             args.extend(["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2"]);
         }
-        args.extend(["-i", device]);
-        return args.into_iter().map(str::to_owned).collect();
+        let url = stream_url(device);
+        let mut args: Vec<String> = args.into_iter().map(str::to_owned).collect();
+        args.extend(["-i".to_owned(), url]);
+        return args;
     }
     // Local devices: skip stream probing, it only adds startup delay.
     args.extend(["-probesize", "32", "-analyzeduration", "0"]);
@@ -131,6 +146,14 @@ mod tests {
         assert!(!http.contains(&"v4l2".to_owned()));
         let rtsp = input_args(&config("rtsp://10.0.0.2:8554/live"), "linux");
         assert!(rtsp.windows(2).any(|w| w == ["-rtsp_transport", "tcp"]));
+    }
+
+    #[test]
+    fn bare_phone_addresses_get_the_stream_path() {
+        assert_eq!(stream_url("http://192.168.1.3:8080/"), "http://192.168.1.3:8080/video");
+        assert_eq!(stream_url("http://192.168.1.3:8080"), "http://192.168.1.3:8080/video");
+        assert_eq!(stream_url("http://192.168.1.3:4747/mjpegfeed"), "http://192.168.1.3:4747/mjpegfeed");
+        assert_eq!(stream_url("rtsp://10.0.0.2:8554/live"), "rtsp://10.0.0.2:8554/live");
     }
 
     #[test]
