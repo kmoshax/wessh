@@ -13,7 +13,7 @@ const FPS_WINDOW: Duration = Duration::from_millis(500);
 
 /// The camera, which exists only while live.
 struct Stream {
-    _camera: Camera,
+    camera: Camera,
 }
 
 pub(super) fn run(engine: &EngineOptions, shared: &Arc<Shared>, inbox: &Receiver<Command>, repaint: &Arc<dyn Fn() + Send + Sync>) {
@@ -58,10 +58,21 @@ pub(super) fn run(engine: &EngineOptions, shared: &Arc<Shared>, inbox: &Receiver
             handle(command, &mut processor, &mut stream, &mailbox, shared, &presenter);
             repaint();
         }
-        if stream.is_none() {
+        let Some(active) = stream.as_mut() else { continue };
+        let Some(mut frame) = mailbox.take_newer(&mut seen, Duration::from_millis(100)) else {
+            if let Some(reason) = active.camera.failure() {
+                stream = None;
+                presenter.control(Control::Stream { output: None, camera: None });
+                shared.update(|s| {
+                    s.phase = Phase::Ready;
+                    s.output_active = false;
+                    s.fps = 0.0;
+                    s.notice = Some(reason);
+                });
+                repaint();
+            }
             continue;
-        }
-        let Some(mut frame) = mailbox.take_newer(&mut seen, Duration::from_millis(100)) else { continue };
+        };
 
         let settings = shared.settings.lock().clone();
         match processor.process(&mut frame, &settings, true) {
@@ -127,7 +138,7 @@ fn handle(
                     });
                     let output_active = output.is_some();
                     presenter.control(Control::Stream { output, camera: Some(mailbox.clone()) });
-                    *stream = Some(Stream { _camera: capture });
+                    *stream = Some(Stream { camera: capture });
                     shared.update(|s| {
                         s.phase = Phase::Live;
                         s.output_active = output_active;

@@ -1,6 +1,7 @@
 use crate::ffmpeg::{ffmpeg, spawn};
 use crate::{LatestFrame, Result};
-use std::io::Read;
+use parking_lot::Mutex;
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,14 +41,28 @@ pub struct Camera {
     process: Child,
     stop: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
+    device: String,
+    last_error: Arc<Mutex<Option<String>>>,
 }
 
 impl Camera {
     pub fn start(config: &CameraConfig, output: Arc<LatestFrame>) -> Result<Self> {
         let mut cmd = ffmpeg();
-        cmd.args(input_args(config, std::env::consts::OS)).args(output_args(config)).stdout(Stdio::piped());
+        cmd.args(input_args(config, std::env::consts::OS)).args(output_args(config)).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut process = spawn(&mut cmd)?;
         let mut stdout = process.stdout.take().expect("stdout is piped");
+        let stderr = process.stderr.take().expect("stderr is piped");
+
+        // Keep ffmpeg's last error line so a failure can be explained instead of just "no frames".
+        let last_error = Arc::new(Mutex::new(None));
+        let sink = last_error.clone();
+        std::thread::Builder::new().name("capture-log".into()).spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(std::io::Result::ok) {
+                if !line.trim().is_empty() {
+                    *sink.lock() = Some(line);
+                }
+            }
+        })?;
 
         let stop = Arc::new(AtomicBool::new(false));
         let (width, height, stopped) = (config.width, config.height, stop.clone());
@@ -60,8 +75,36 @@ impl Camera {
                 output.publish(frame);
             }
         })?;
-        Ok(Self { process, stop, reader: Some(reader) })
+        Ok(Self { process, stop, reader: Some(reader), device: config.device.clone(), last_error })
     }
+
+    /// Why the camera stopped, once ffmpeg has exited; `None` while it is still running.
+    pub fn failure(&mut self) -> Option<String> {
+        self.process.try_wait().ok().flatten()?;
+        Some(explain_failure(&self.device, self.last_error.lock().as_deref()))
+    }
+}
+
+/// A user-facing explanation of why capture from `device` failed, from ffmpeg's last error line.
+fn explain_failure(device: &str, ffmpeg_error: Option<&str>) -> String {
+    let detail = ffmpeg_error.unwrap_or("no error message");
+    let has = |needle: &str| detail.to_ascii_lowercase().contains(needle);
+    if is_network_source(device) {
+        if has("connection refused") || has("timed out") || has("no route to host") || has("unreachable") {
+            return format!(
+                "Can't reach {device}. Make sure the camera app on your phone is open with its server started, \
+                 the screen is on, and the phone is on the same Wi-Fi."
+            );
+        }
+        if has("404") || has("not found") || has("invalid data") {
+            return format!("{device} answered, but not with video. Paste the stream address the camera app shows.");
+        }
+    } else if has("busy") {
+        return format!("{device} is in use by another app. Close it and start again.");
+    } else if has("no such file") || has("no such device") {
+        return format!("Camera {device} was not found. Is it plugged in?");
+    }
+    format!("The camera stopped: {detail}")
 }
 
 /// Whether `device` names a network stream (phone camera apps, IP cameras) rather than a local device.
@@ -146,6 +189,15 @@ mod tests {
         assert!(!http.contains(&"v4l2".to_owned()));
         let rtsp = input_args(&config("rtsp://10.0.0.2:8554/live"), "linux");
         assert!(rtsp.windows(2).any(|w| w == ["-rtsp_transport", "tcp"]));
+    }
+
+    #[test]
+    fn failures_are_explained() {
+        let phone = "http://192.168.1.3:8080/";
+        assert!(explain_failure(phone, Some("Connection to tcp://192.168.1.3:8080 failed: Connection refused")).contains("server started"));
+        assert!(explain_failure("/dev/video0", Some("Device or resource busy")).contains("in use"));
+        assert!(explain_failure("/dev/video9", Some("No such file or directory")).contains("not found"));
+        assert!(explain_failure("/dev/video0", None).starts_with("The camera stopped"));
     }
 
     #[test]

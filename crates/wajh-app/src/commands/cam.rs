@@ -11,14 +11,15 @@ pub fn run(options: &Options, source: &[PathBuf], camera: &CameraArgs, out: Opti
     let mut processor = processor(options, source)?;
     let settings = Settings { mirror: camera.mirror, ..options.settings() };
     let mailbox = Arc::new(LatestFrame::default());
-    let _camera = Camera::start(&camera.config(), mailbox.clone())?;
+    let mut camera_capture = Camera::start(&camera.config(), mailbox.clone())?;
     let mut sink = out.map(|t| FrameSink::live(&OutputTarget::parse(t), camera.width, camera.height, camera.fps)).transpose()?;
 
     eprintln!("running — Ctrl+C to stop");
     let (mut seen, mut window, mut frames, mut total) = (0, Instant::now(), 0u32, Stats::default());
     loop {
         let Some(mut frame) = mailbox.take_newer(&mut seen, Duration::from_secs(2)) else {
-            bail!("the camera stopped delivering frames");
+            let reason = camera_capture.failure().unwrap_or_else(|| "the camera stopped delivering frames".to_owned());
+            bail!("{reason}");
         };
         total += processor.process(&mut frame, &settings, true)?;
         if let Some(sink) = sink.as_mut() {
