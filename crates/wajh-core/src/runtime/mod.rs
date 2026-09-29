@@ -1,7 +1,7 @@
 //! ONNX Runtime integration: library discovery, execution-provider selection and model sessions.
 
 mod engine;
-mod locate;
+pub mod locate;
 mod model;
 pub mod proto;
 
