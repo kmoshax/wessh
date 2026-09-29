@@ -72,6 +72,9 @@ impl Swapper {
     /// Convert an identity embedding into this network's `source` input. Compute once per identity.
     #[must_use]
     pub fn condition(&self, identity: &Embedding) -> Vec<f32> {
+        if self.kind == SwapModel::Alphaface {
+            return identity.0.clone(); // AlphaFace was trained on raw ArcFace embeddings
+        }
         let Some(map) = &self.embedding_map else {
             return identity.normalized();
         };
@@ -88,8 +91,8 @@ impl Swapper {
 
     const fn normalization(&self) -> Normalization {
         match self.kind {
-            SwapModel::Inswapper => Normalization::UNIT_RGB,
-            _ => Normalization::SIGNED_RGB,
+            SwapModel::Inswapper | SwapModel::Alphaface => Normalization::UNIT_RGB,
+            SwapModel::Hyperswap1a | SwapModel::Hyperswap1b | SwapModel::Hyperswap1c => Normalization::SIGNED_RGB,
         }
     }
 

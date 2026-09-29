@@ -76,10 +76,12 @@ pub enum SwapModel {
     Hyperswap1b,
     /// FaceFusion HyperSwap 1c, 256px.
     Hyperswap1c,
+    /// AlphaFace (2026), 256px; better on turned heads.
+    Alphaface,
 }
 
 impl SwapModel {
-    pub const ALL: [Self; 4] = [Self::Inswapper, Self::Hyperswap1a, Self::Hyperswap1b, Self::Hyperswap1c];
+    pub const ALL: [Self; 5] = [Self::Inswapper, Self::Hyperswap1a, Self::Hyperswap1b, Self::Hyperswap1c, Self::Alphaface];
 
     #[must_use]
     pub const fn asset(self) -> Asset {
@@ -88,6 +90,7 @@ impl SwapModel {
             Self::Hyperswap1a => facefusion!("models-3.3.0", "hyperswap_1a_256"),
             Self::Hyperswap1b => facefusion!("models-3.3.0", "hyperswap_1b_256"),
             Self::Hyperswap1c => facefusion!("models-3.3.0", "hyperswap_1c_256"),
+            Self::Alphaface => facefusion!("models-3.9.0", "alphaface_256"),
         }
     }
 
@@ -98,6 +101,7 @@ impl SwapModel {
             Self::Hyperswap1a => "HyperSwap 1a",
             Self::Hyperswap1b => "HyperSwap 1b",
             Self::Hyperswap1c => "HyperSwap 1c",
+            Self::Alphaface => "AlphaFace",
         }
     }
 
@@ -106,7 +110,7 @@ impl SwapModel {
     pub const fn resolution(self) -> usize {
         match self {
             Self::Inswapper => 128,
-            Self::Hyperswap1a | Self::Hyperswap1b | Self::Hyperswap1c => 256,
+            Self::Hyperswap1a | Self::Hyperswap1b | Self::Hyperswap1c | Self::Alphaface => 256,
         }
     }
 }

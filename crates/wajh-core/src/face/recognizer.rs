@@ -28,18 +28,21 @@ impl Embedding {
         self.normalized().iter().zip(other.normalized()).map(|(a, b)| a * b).sum()
     }
 
-    /// Mean identity of several embeddings of the same person (each normalised first, so every
-    /// photo counts equally). A few varied photos give a steadier identity than any single one.
-    /// Returns `None` for an empty slice.
+    /// Mean identity of several embeddings of the same person. Directions are averaged after
+    /// normalising (so every photo counts equally) and the result keeps the photos' mean
+    /// magnitude, since some swappers (`AlphaFace`) take the raw embedding. A few varied photos
+    /// give a steadier identity than any single one. Returns `None` for an empty slice.
     #[must_use]
     pub fn average(embeddings: &[Self]) -> Option<Self> {
         let first = embeddings.first()?;
-        let mut sum = vec![0f32; first.0.len()];
-        for embedding in embeddings {
-            sum.iter_mut().zip(embedding.normalized()).for_each(|(s, v)| *s += v);
-        }
         let n = embeddings.len() as f32;
-        Some(Self(sum.into_iter().map(|s| s / n).collect()))
+        let mut direction = vec![0f32; first.0.len()];
+        for embedding in embeddings {
+            direction.iter_mut().zip(embedding.normalized()).for_each(|(d, v)| *d += v);
+        }
+        let mean = Self(direction);
+        let scale = embeddings.iter().map(Self::norm).sum::<f32>() / n / mean.norm();
+        Some(Self(mean.0.into_iter().map(|d| d * scale).collect()))
     }
 }
 
@@ -68,8 +71,8 @@ mod tests {
     #[test]
     fn average_weighs_every_embedding_equally() {
         let avg = Embedding::average(&[Embedding(vec![10.0, 0.0]), Embedding(vec![0.0, 0.5])]).unwrap();
-        assert_eq!(avg.0, [0.5, 0.5]);
-        assert!((avg.similarity(&Embedding(vec![1.0, 1.0])) - 1.0).abs() < 1e-6);
+        assert!((avg.similarity(&Embedding(vec![1.0, 1.0])) - 1.0).abs() < 1e-6, "directions count equally");
+        assert!((avg.norm() - 5.25).abs() < 1e-4, "magnitude is the mean of the inputs'");
         assert!(Embedding::average(&[]).is_none());
     }
 }
