@@ -27,6 +27,20 @@ impl Embedding {
     pub fn similarity(&self, other: &Self) -> f32 {
         self.normalized().iter().zip(other.normalized()).map(|(a, b)| a * b).sum()
     }
+
+    /// Mean identity of several embeddings of the same person (each normalised first, so every
+    /// photo counts equally). A few varied photos give a steadier identity than any single one.
+    /// Returns `None` for an empty slice.
+    #[must_use]
+    pub fn average(embeddings: &[Self]) -> Option<Self> {
+        let first = embeddings.first()?;
+        let mut sum = vec![0f32; first.0.len()];
+        for embedding in embeddings {
+            sum.iter_mut().zip(embedding.normalized()).for_each(|(s, v)| *s += v);
+        }
+        let n = embeddings.len() as f32;
+        Some(Self(sum.into_iter().map(|s| s / n).collect()))
+    }
 }
 
 /// ArcFace (w600k r50) identity encoder.
@@ -42,7 +56,20 @@ impl Recognizer {
     pub fn embed(&mut self, frame: &Frame, landmarks: &Landmarks5) -> Result<Embedding> {
         let to_crop = Template::Arcface112.align(landmarks, SIZE);
         let crop = warp_crop(frame, &to_crop, SIZE);
-        let tensor = to_nchw(&crop, SIZE, Normalization::SIGNED_RGB);
-        Ok(Embedding(self.model.run_single(&[Input::image("input", SIZE, &tensor)])?))
+        let input = Input::image("input", SIZE, to_nchw(&crop, SIZE, Normalization::SIGNED_RGB));
+        Ok(Embedding(self.model.run_single(vec![input])?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Embedding;
+
+    #[test]
+    fn average_weighs_every_embedding_equally() {
+        let avg = Embedding::average(&[Embedding(vec![10.0, 0.0]), Embedding(vec![0.0, 0.5])]).unwrap();
+        assert_eq!(avg.0, [0.5, 0.5]);
+        assert!((avg.similarity(&Embedding(vec![1.0, 1.0])) - 1.0).abs() < 1e-6);
+        assert!(Embedding::average(&[]).is_none());
     }
 }

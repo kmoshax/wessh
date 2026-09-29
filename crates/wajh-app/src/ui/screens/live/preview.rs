@@ -142,7 +142,7 @@ fn stat_chips(ui: &mut Ui, inner: Rect, frame: &Frame<'_>) {
     let bottom = Rect::from_min_max(inner.left_bottom() - vec2(0.0, theme::size::TARGET), inner.center_bottom());
     ui.scope_builder(UiBuilder::new().max_rect(bottom).layout(Layout::left_to_right(Align::Max)), |ui| {
         ui.spacing_mut().item_spacing.x = spacing::SM;
-        let stages = [("Detect", stats.detect_ms), ("Swap", stats.swap_ms), ("Enhance", stats.enhance_ms)];
+        let stages = [("Detect", stats.detect_ms), ("Swap", stats.swap_ms), ("Mask", stats.mask_ms), ("Enhance", stats.enhance_ms)];
         for (stage, ms) in stages.into_iter().filter(|(_, ms)| *ms > 0.0) {
             ui.add(Chip::status(&format!("{stage} {ms:.1} ms"), false));
         }

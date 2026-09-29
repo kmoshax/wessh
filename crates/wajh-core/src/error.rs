@@ -19,6 +19,9 @@ pub enum Error {
     #[error("model {model} returned unexpected output: {detail}")]
     UnexpectedOutput { model: &'static str, detail: String },
 
+    #[error("model {model} has a dynamic shape: {detail}")]
+    DynamicShape { model: &'static str, detail: String },
+
     #[error("download of {url} failed: {reason}")]
     Download { url: String, reason: String },
 
@@ -27,6 +30,9 @@ pub enum Error {
 
     #[error("no face found in the source image")]
     NoSourceFace,
+
+    #[error("reference face #{index} requested but the reference image has {found} face(s)")]
+    NoReferenceFace { index: usize, found: usize },
 
     #[error("image error: {0}")]
     Image(#[from] ::image::ImageError),

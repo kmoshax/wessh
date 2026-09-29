@@ -88,6 +88,32 @@ impl<'a> Plane<'a> {
     }
 }
 
+/// Bilinear sample of a 3-channel interleaved image at `(x, y)`, clamped to the edges.
+/// Convenience for cold paths; hot loops should build a [`Bgr`] once and reuse it.
+#[inline]
+pub(super) fn bilinear(src: &[u8], width: usize, height: usize, x: f32, y: f32) -> [f32; 3] {
+    match Bgr::new(src, width, height) {
+        Some(image) => image.sample(x, y),
+        None => nearest(src, width, height, x, y, Bgr::CHANNELS).map_or([0.0; 3], |i| std::array::from_fn(|c| f32::from(src[i + c]))),
+    }
+}
+
+/// Bilinear sample of a square single-channel plane at `(x, y)`, clamped to the edges.
+#[inline]
+pub(super) fn bilinear_plane(plane: &[f32], size: usize, x: f32, y: f32) -> f32 {
+    match Plane::new(plane, size) {
+        Some(p) => p.sample_taps(Tap::new(x, size), Tap::new(y, size)),
+        None => nearest(plane, size, size, x, y, 1).map_or(0.0, |i| plane[i]),
+    }
+}
+
+/// Index of the pixel nearest `(x, y)` in an image too small to interpolate.
+fn nearest<T>(data: &[T], width: usize, height: usize, x: f32, y: f32, channels: usize) -> Option<usize> {
+    let clamp = |v: f32, len: usize| (v.round().max(0.0) as usize).min(len.saturating_sub(1));
+    let index = (clamp(y, height) * width + clamp(x, width)) * channels;
+    (width > 0 && height > 0 && index + channels <= data.len()).then_some(index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

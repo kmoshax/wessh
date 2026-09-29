@@ -80,21 +80,24 @@ impl FaceTracker {
         self.faces.clear();
     }
 
-    /// Faces in `frame`, largest first, at most `limit` of them.
-    pub fn detect(&mut self, source: &mut impl FaceSource, frame: &Frame, limit: usize) -> Result<(Vec<Face>, Pass)> {
+    /// Faces in `frame`, largest first: the tracked faces re-found in their regions, or every
+    /// face from a full pass. Report which of them to keep following with [`FaceTracker::track`].
+    pub fn detect(&mut self, source: &mut impl FaceSource, frame: &Frame) -> Result<(Vec<Face>, Pass)> {
         let due = self.faces.is_empty()
             || self.faces.len() > self.config.max_regions
             || self.frames_since_full >= self.config.full_detection_interval;
         if !due && let Some(faces) = self.detect_regions(source, frame)? {
             self.frames_since_full += 1;
-            self.faces.clone_from(&faces);
             return Ok((faces, Pass::Regions));
         }
-        let mut faces = source.detect_full(frame)?;
-        faces.truncate(limit);
-        self.faces.clone_from(&faces);
         self.frames_since_full = 0;
-        Ok((faces, Pass::Full))
+        Ok((source.detect_full(frame)?, Pass::Full))
+    }
+
+    /// Follow `faces` (typically the ones selected for swapping) from the next frame on.
+    pub fn track(&mut self, faces: &[Face]) {
+        self.faces.clear();
+        self.faces.extend_from_slice(faces);
     }
 
     /// Re-find every tracked face in its search square; `None` if any of them is lost.
@@ -167,6 +170,13 @@ mod tests {
         }
     }
 
+    /// Detect, then keep tracking everything found.
+    fn step(tracker: &mut FaceTracker, source: &mut Scene, frame: &Frame) -> (Vec<Face>, Pass) {
+        let (faces, pass) = tracker.detect(source, frame).expect("detect");
+        tracker.track(&faces);
+        (faces, pass)
+    }
+
     fn scene(faces: Vec<Face>) -> Scene {
         Scene { faces, full_passes: 0, region_passes: 0 }
     }
@@ -176,9 +186,9 @@ mod tests {
         let frame = Frame::new(640, 480);
         let mut tracker = FaceTracker::default();
         let mut source = scene(vec![face_at(300.0, 200.0, 100.0)]);
-        assert_eq!(tracker.detect(&mut source, &frame, 1).expect("detect").1, Pass::Full);
+        assert_eq!(step(&mut tracker, &mut source, &frame).1, Pass::Full);
         source.faces = vec![face_at(330.0, 210.0, 100.0)];
-        let (faces, pass) = tracker.detect(&mut source, &frame, 1).expect("detect");
+        let (faces, pass) = step(&mut tracker, &mut source, &frame);
         assert_eq!((pass, center(&faces[0])), (Pass::Regions, [330.0, 210.0]));
         assert_eq!((source.full_passes, source.region_passes), (1, 1));
     }
@@ -188,9 +198,9 @@ mod tests {
         let frame = Frame::new(640, 480);
         let mut tracker = FaceTracker::default();
         let mut source = scene(vec![face_at(150.0, 200.0, 80.0)]);
-        tracker.detect(&mut source, &frame, 1).expect("detect");
+        step(&mut tracker, &mut source, &frame);
         source.faces = vec![face_at(500.0, 200.0, 80.0)];
-        let (faces, pass) = tracker.detect(&mut source, &frame, 1).expect("detect");
+        let (faces, pass) = step(&mut tracker, &mut source, &frame);
         assert_eq!((pass, center(&faces[0])), (Pass::Full, [500.0, 200.0]));
     }
 
@@ -200,13 +210,13 @@ mod tests {
         let mut tracker =
             FaceTracker { config: TrackerConfig { full_detection_interval: 2, ..TrackerConfig::default() }, ..FaceTracker::default() };
         let mut source = scene(vec![face_at(300.0, 200.0, 100.0)]);
-        let passes: Vec<Pass> = (0..4).map(|_| tracker.detect(&mut source, &frame, 1).expect("detect").1).collect();
+        let passes: Vec<Pass> = (0..4).map(|_| step(&mut tracker, &mut source, &frame).1).collect();
         assert_eq!(passes, [Pass::Full, Pass::Regions, Pass::Regions, Pass::Full]);
 
         let mut crowd = scene((0..3).map(|i| face_at(100.0 + 200.0 * i as f32, 200.0, 60.0)).collect());
         tracker.reset();
-        tracker.detect(&mut crowd, &frame, usize::MAX).expect("detect");
-        assert_eq!(tracker.detect(&mut crowd, &frame, usize::MAX).expect("detect").1, Pass::Full);
+        step(&mut tracker, &mut crowd, &frame);
+        assert_eq!(step(&mut tracker, &mut crowd, &frame).1, Pass::Full);
     }
 
     #[test]

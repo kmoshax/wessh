@@ -31,7 +31,7 @@ impl<T: PartialEq + Copy> Widget for SegmentedButton<'_, T> {
         let count = self.options.len().max(1);
         let segment_width = outer.width() / count as f32;
         let full = shape::full(HEIGHT);
-        let outline = Stroke::new(size::STROKE, paint::content(colors.outline, enabled));
+        let outline = Stroke::new(size::STROKE, colors.outline);
 
         for (index, (option, label)) in self.options.iter().enumerate() {
             let left = outer.left() + segment_width * index as f32;
@@ -52,7 +52,7 @@ impl<T: PartialEq + Copy> Widget for SegmentedButton<'_, T> {
                 let fill = paint::container(colors.secondary_container, enabled).gamma_multiply(t);
                 painter.rect_filled(rect, radius, fill);
             }
-            let content = paint::content(colors.on_surface.lerp_to_gamma(colors.on_secondary_container, t), enabled);
+            let content = colors.on_surface.lerp_to_gamma(colors.on_secondary_container, t);
             paint::state_layer(ui, &segment, rect, radius, content);
             paint::focus_ring(ui, &segment, rect, radius, &colors);
             segment_label(ui, rect, label, content, t);

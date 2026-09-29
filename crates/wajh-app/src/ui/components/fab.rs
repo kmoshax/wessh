@@ -66,11 +66,8 @@ impl Widget for ExtendedFab<'_> {
         let (container, content) = self.color.roles(&colors);
         let container = paint::animate_color(ui, self.id.with("container"), container, motion::MEDIUM_2);
         let content = paint::animate_color(ui, self.id.with("content"), content, motion::MEDIUM_2);
-        let (container, content) = if enabled {
-            (container, content)
-        } else {
-            (paint::container(colors.on_surface, false), paint::content(colors.on_surface, false))
-        };
+        let (container, content) =
+            if enabled { (container, content) } else { (paint::container(colors.on_surface, false), colors.on_surface) };
         let elevation = if response.hovered() && enabled { Elevation::Level4 } else { Elevation::Level3 };
         let radius = shape::LARGE;
         let painter = ui.painter();

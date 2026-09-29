@@ -64,16 +64,14 @@ pub fn focus_ring(ui: &Ui, response: &Response, rect: Rect, radius: CornerRadius
     }
 }
 
-/// `color` faded to the MD3 disabled-content opacity when `enabled` is false.
-#[must_use]
-pub fn content(color: Color32, enabled: bool) -> Color32 {
-    if enabled { color } else { state::with_opacity(color, state::DISABLED_CONTENT) }
-}
-
-/// `color` faded to the MD3 disabled-container opacity when `enabled` is false.
+/// A container colour for the given enabled state.
+///
+/// egui already fades everything in a disabled `Ui` by `disabled_alpha`, which the theme sets
+/// to the MD3 disabled-content opacity, so disabled content needs no extra fading. Containers
+/// should end at the lower MD3 disabled-container opacity, so they get the remaining factor.
 #[must_use]
 pub fn container(color: Color32, enabled: bool) -> Color32 {
-    if enabled { color } else { state::with_opacity(color, state::DISABLED_CONTAINER) }
+    if enabled { color } else { state::with_opacity(color, state::DISABLED_CONTAINER / state::DISABLED_CONTENT) }
 }
 
 /// Smoothly transition towards `target` over `duration` seconds (per channel).

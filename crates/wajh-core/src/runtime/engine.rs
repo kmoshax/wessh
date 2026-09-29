@@ -134,6 +134,7 @@ impl Engine {
         if self.cuda_graphs() {
             match load(true) {
                 Ok(model) => return Ok(model),
+                Err(e @ Error::DynamicShape { .. }) => return Err(e),
                 Err(e) => eprintln!("{}: CUDA graph unavailable ({e}); running without", asset.name),
             }
         }

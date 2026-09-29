@@ -140,10 +140,12 @@ impl Drop for StaticModel {
 
 /// Dimensions of a tensor input/output, which must all be fixed.
 fn static_dims(outlet: &Outlet, model: &'static str) -> Result<Vec<usize>> {
-    let unexpected = |detail: String| Error::UnexpectedOutput { model, detail };
-    let shape = outlet.dtype().tensor_shape().ok_or_else(|| unexpected(format!("{} is not a tensor", outlet.name())))?;
+    let shape = outlet
+        .dtype()
+        .tensor_shape()
+        .ok_or_else(|| Error::UnexpectedOutput { model, detail: format!("{} is not a tensor", outlet.name()) })?;
     if shape.iter().any(|&d| d <= 0) {
-        return Err(unexpected(format!("{} has a dynamic shape {shape:?}", outlet.name())));
+        return Err(Error::DynamicShape { model, detail: format!("{} is {shape:?}", outlet.name()) });
     }
     Ok(shape.iter().map(|&d| d as usize).collect())
 }

@@ -1,14 +1,14 @@
 use super::processor;
 use crate::cli::Options;
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 use wajh_core::Frame;
 use wajh_media::{Encoder, VideoReader, probe};
 
 /// Decode → swap → encode, each on its own thread, connected by bounded channels so ffmpeg
 /// never waits on inference and memory stays flat.
-pub fn run(options: &Options, source: &Path, target: &str, output: &str, encoder: Option<String>) -> Result<()> {
+pub fn run(options: &Options, source: &[PathBuf], target: &str, output: &str, encoder: Option<String>) -> Result<()> {
     const QUEUE: usize = 8;
     let info = probe(target)?;
     let encoder = encoder.map_or_else(Encoder::best_available, Encoder);

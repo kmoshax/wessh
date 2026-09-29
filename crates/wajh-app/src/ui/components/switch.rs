@@ -55,7 +55,7 @@ impl Widget for Switch<'_> {
         let painter = ui.painter();
         painter.rect_filled(track, radius, track_fill);
         if t < 1.0 {
-            let outline = paint::content(colors.outline, enabled).gamma_multiply(1.0 - t);
+            let outline = colors.outline.gamma_multiply(1.0 - t);
             painter.rect_stroke(track, radius, Stroke::new(TRACK_OUTLINE, outline), StrokeKind::Inside);
         }
 
@@ -69,7 +69,7 @@ impl Widget for Switch<'_> {
         } else if on {
             colors.surface
         } else {
-            paint::content(colors.on_surface, false)
+            colors.on_surface
         };
         let layer_rect = eframe::egui::Rect::from_center_size(center, Vec2::splat(STATE_LAYER));
         let layer_color = if on { colors.primary } else { colors.on_surface };
@@ -77,7 +77,7 @@ impl Widget for Switch<'_> {
         paint::focus_ring(ui, &response, track, radius, &colors);
         painter.circle_filled(center, handle_size / 2.0, handle);
         if t > 0.5 {
-            let icon_color = paint::content(colors.on_primary_container, enabled).gamma_multiply((t - 0.5) * 2.0);
+            let icon_color = colors.on_primary_container.gamma_multiply((t - 0.5) * 2.0);
             paint::icon(painter, center, icons::CHECK, ICON_SIZE, icon_color, false);
         }
         response

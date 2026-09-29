@@ -1,12 +1,18 @@
-//! Face models: detection, identity embedding, swapping and restoration.
+//! Face models: detection, identity embedding, swapping, restoration and segmentation.
 
 mod detector;
 mod enhancer;
+pub mod masker;
+mod occluder;
+mod parser;
 mod recognizer;
 mod swapper;
 
 pub use detector::Detector;
 pub use enhancer::Enhancer;
+pub use masker::{MaskSpec, Masker};
+pub use occluder::Occluder;
+pub use parser::{FaceRegion, FaceRegions, Parser};
 pub use recognizer::{Embedding, Recognizer};
 pub use swapper::Swapper;
 

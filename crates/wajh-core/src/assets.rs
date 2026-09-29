@@ -25,6 +25,40 @@ macro_rules! facefusion {
 pub const DETECTOR: Asset = facefusion!("models-3.0.0", "scrfd_2.5g");
 pub const RECOGNIZER: Asset = facefusion!("models-3.0.0", "arcface_w600k_r50");
 pub const ENHANCER: Asset = facefusion!("models-3.0.0", "gpen_bfr_256");
+/// `BiSeNet` face parser (19 `CelebAMask-HQ` classes, 512px).
+pub const PARSER: Asset = facefusion!("models-3.0.0", "bisenet_resnet_34");
+
+/// `XSeg` occluders: segment the visible face so hands, hair and glasses in front of it survive.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+pub enum OccluderModel {
+    #[default]
+    Xseg1,
+    Xseg2,
+    Xseg3,
+}
+
+impl OccluderModel {
+    pub const ALL: [Self; 3] = [Self::Xseg1, Self::Xseg2, Self::Xseg3];
+
+    #[must_use]
+    pub const fn asset(self) -> Asset {
+        match self {
+            Self::Xseg1 => facefusion!("models-3.1.0", "xseg_1"),
+            Self::Xseg2 => facefusion!("models-3.1.0", "xseg_2"),
+            Self::Xseg3 => facefusion!("models-3.2.0", "xseg_3"),
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Xseg1 => "XSeg 1",
+            Self::Xseg2 => "XSeg 2",
+            Self::Xseg3 => "XSeg 3",
+        }
+    }
+}
 
 /// Face swap networks, fastest first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

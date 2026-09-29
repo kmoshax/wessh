@@ -30,7 +30,7 @@ fn shell(ui: &Ui, rect: Rect, response: &Response, label: &str, leading: Option<
     paint::state_layer(ui, response, rect, TOP_ROUNDED, colors.on_surface);
 
     let focus = ui.ctx().animate_bool_with_time(response.id.with("active"), active, motion::SHORT_4);
-    let indicator_color = paint::content(colors.on_surface_variant.lerp_to_gamma(colors.primary, focus), enabled);
+    let indicator_color = colors.on_surface_variant.lerp_to_gamma(colors.primary, focus);
     let thickness = egui::lerp(INDICATOR..=INDICATOR_FOCUSED, focus);
     let indicator = Rect::from_x_y_ranges(rect.x_range(), rect.bottom() - thickness..=rect.bottom());
     painter.rect_filled(indicator, CornerRadius::ZERO, indicator_color);
@@ -38,10 +38,10 @@ fn shell(ui: &Ui, rect: Rect, response: &Response, label: &str, leading: Option<
     let mut left = rect.left() + PADDING_X;
     if let Some(icon) = leading {
         let center = pos2(left + size::ICON / 2.0, rect.center().y);
-        paint::icon(painter, center, icon, size::ICON, paint::content(colors.on_surface_variant, enabled), false);
+        paint::icon(painter, center, icon, size::ICON, colors.on_surface_variant, false);
         left += size::ICON + ICON_GAP;
     }
-    let label_color = paint::content(colors.on_surface_variant.lerp_to_gamma(colors.primary, focus), enabled);
+    let label_color = colors.on_surface_variant.lerp_to_gamma(colors.primary, focus);
     paint::text(ui, pos2(left, rect.top() + LABEL_TOP), Align2::LEFT_TOP, TypeRole::BodySmall, label, label_color);
     Rect::from_min_max(pos2(left, rect.top() + VALUE_TOP), pos2(rect.right() - PADDING_X, rect.bottom() - spacing::SM))
 }
@@ -81,7 +81,7 @@ impl Widget for TextField<'_> {
         let edit_id = response.id.with("edit");
         let focused = ui.memory(|m| m.has_focus(edit_id));
         let value_rect = shell(ui, rect, &response, self.label, self.icon, focused);
-        let text_color = paint::content(colors.on_surface, ui.is_enabled());
+        let text_color = colors.on_surface;
         let edit = egui::TextEdit::singleline(self.text)
             .id(edit_id)
             .frame(false)
@@ -131,11 +131,11 @@ impl<T: PartialEq + Copy> Widget for Dropdown<'_, T> {
             Popup::menu(&response).width(rect.width()).gap(0.0).close_behavior(PopupCloseBehavior::CloseOnClick).frame(menu_frame(&colors));
         let open = popup.is_open();
         let value_rect = shell(ui, rect, &response, self.label, self.icon, open);
-        let text_color = paint::content(colors.on_surface, enabled);
+        let text_color = colors.on_surface;
         paint::text(ui, value_rect.left_center(), Align2::LEFT_CENTER, TypeRole::BodyLarge, selected_label, text_color);
         let arrow = pos2(rect.right() - PADDING_X - size::ICON / 2.0, rect.center().y);
         let glyph = if open { icons::ARROW_DROP_UP } else { icons::ARROW_DROP_DOWN };
-        paint::icon(ui.painter(), arrow, glyph, size::ICON, paint::content(colors.on_surface_variant, enabled), false);
+        paint::icon(ui.painter(), arrow, glyph, size::ICON, colors.on_surface_variant, false);
 
         let chosen = popup
             .show(|ui| {

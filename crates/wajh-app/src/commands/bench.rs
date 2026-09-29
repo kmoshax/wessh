@@ -3,7 +3,7 @@
 use super::processor;
 use crate::cli::Options;
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use wajh_core::geometry::Template;
 use wajh_core::image::{box_mask, letterbox_nchw, paste_back, warp_crop};
@@ -15,7 +15,7 @@ const WARMUP: usize = 5;
 const KERNEL_FRAME: (usize, usize) = (1920, 1080);
 const KERNEL_ITERATIONS: usize = 200;
 
-pub fn run(options: &Options, source: &Path, target: &Path, iterations: usize, profile: bool) -> Result<()> {
+pub fn run(options: &Options, source: &[PathBuf], target: &Path, iterations: usize, profile: bool) -> Result<()> {
     let mut processor = processor(options, source)?;
     let settings = options.settings();
     let image = Frame::open(target)?;
