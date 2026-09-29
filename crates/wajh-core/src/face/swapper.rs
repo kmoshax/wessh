@@ -41,9 +41,7 @@ struct BoundSwap {
 impl Swapper {
     pub fn new(engine: &Engine, kind: SwapModel) -> Result<Self> {
         let asset = kind.asset();
-        // TensorRT's fp16 build of inswapper (already an fp16 export) produces a washed-out,
-        // noisy face, and its fp32 build is slower (34 ms) than the CUDA provider (22 ms, RTX 4050).
-        let shapes = StaticShapes { skip_tensorrt: kind == SwapModel::Inswapper, ..StaticShapes::default() };
+        let shapes = StaticShapes { skip_tensorrt: !kind.tensorrt_safe(), ..StaticShapes::default() };
         let network = match engine.load_static_with(&asset, &shapes) {
             Ok(model) => {
                 let index = |name: &str| {

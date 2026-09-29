@@ -105,6 +105,14 @@ impl SwapModel {
         }
     }
 
+    /// Whether TensorRT's fp16 build reproduces the network's output. inswapper and `AlphaFace`
+    /// come out washed-out and noisy (checked against the CUDA provider on an RTX 4050), and
+    /// inswapper's fp32 build is slower than CUDA (34 ms vs 22 ms), so both stay on CUDA.
+    #[must_use]
+    pub const fn tensorrt_safe(self) -> bool {
+        matches!(self, Self::Hyperswap1a | Self::Hyperswap1b | Self::Hyperswap1c)
+    }
+
     /// Side length of the aligned crop the network works on.
     #[must_use]
     pub const fn resolution(self) -> usize {
