@@ -75,7 +75,7 @@ impl Default for Settings {
             stabilize: true,
             mask_blur: 0.3,
             mask_padding: [0.0; 4],
-            occlusion: false,
+            occlusion: true,
             occluder_model: OccluderModel::default(),
             region_mask: false,
             face_regions: FaceRegions::ALL,

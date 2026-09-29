@@ -28,7 +28,10 @@ impl Occluder {
             unpad_conv_transpose: true,
             ..GraphPatch::default()
         };
-        let model = engine.load_static_with(&asset, &StaticShapes { patch: Some(&patch), outputs: &outputs, ..StaticShapes::default() })?;
+        // TensorRT fp16 returns an empty mask for some faces (a whole face then goes unswapped),
+        // so XSeg stays on the CUDA provider, where its output matches the reference.
+        let shapes = StaticShapes { patch: Some(&patch), outputs: &outputs, skip_tensorrt: true, ..StaticShapes::default() };
+        let model = engine.load_static_with(&asset, &shapes)?;
         if model.output(0).len() != Self::SIZE * Self::SIZE {
             return Err(Error::UnexpectedOutput { model: asset.name, detail: format!("{} values", model.output(0).len()) });
         }
