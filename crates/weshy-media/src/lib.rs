@@ -1,8 +1,9 @@
-//! Video I/O through ffmpeg subprocesses: webcam capture, virtual-camera / stream output and
-//! video files. ffmpeg does all decoding and encoding (incl. NVENC / `VideoToolbox`) natively;
-//! only raw BGR frames cross the pipes.
+//! Video I/O: native webcam capture and v4l2loopback output (live mode needs no ffmpeg), and
+//! ffmpeg subprocesses for network streams and video files, which do all decoding and encoding
+//! (incl. NVENC / `VideoToolbox`); only raw BGR frames cross the pipes.
 
 mod camera;
+mod convert;
 mod devices;
 mod error;
 mod ffmpeg;

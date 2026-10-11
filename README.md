@@ -153,7 +153,7 @@ executable (also `./ort/lib` and `./lib`), then `<data dir>/ort/lib`.
 | `ORT_DYLIB_PATH`                 | ONNX Runtime library to load                             |
 | `WESHY_CUDA_DIR`                  | directory of CUDA libraries to preload                   |
 | `WESHY_THREADS`                   | CPU inference threads (default: one per physical core)   |
-| `WESHY_FFMPEG`, `WESHY_FFPROBE`    | ffmpeg / ffprobe executables                             |
+| `WESHY_FFMPEG`                   | ffmpeg executable to run                                 |
 
 ### Virtual camera on Linux
 

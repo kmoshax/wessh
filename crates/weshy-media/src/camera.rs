@@ -1,5 +1,10 @@
+//! Webcam capture. Local cameras are read natively (V4L2, Media Foundation, AVFoundation through
+//! `nokhwa`), so live mode needs no ffmpeg; network streams (phone camera apps) go through ffmpeg.
+
+use crate::convert::{self, PixelFormat};
 use crate::ffmpeg::{ffmpeg, spawn};
 use crate::{LatestFrame, Result};
+use nokhwa::utils::{ApiBackend, CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType};
 use parking_lot::Mutex;
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Child, Stdio};
@@ -7,10 +12,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
+/// Formats we convert ourselves, most preferred first: MJPEG reaches 720p/1080p at 30 fps on
+/// every UVC webcam, where uncompressed YUYV often tops out at a few frames per second.
+const NATIVE_FORMATS: [FrameFormat; 6] =
+    [FrameFormat::MJPEG, FrameFormat::YUYV, FrameFormat::NV12, FrameFormat::RAWRGB, FrameFormat::RAWBGR, FrameFormat::GRAY];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CameraConfig {
-    /// Linux: `/dev/video0`; macOS: device index; Windows: `video=<device name>`; or a network
-    /// stream such as a phone camera app (`http://192.168.1.20:8080/video`, `rtsp://…`).
+    /// Linux: `/dev/video0`; Windows and macOS: the camera's index (`0`); or a network stream
+    /// such as a phone camera app (`http://192.168.1.20:8080/video`, `rtsp://…`).
     pub device: String,
     pub width: usize,
     pub height: usize,
@@ -25,20 +35,27 @@ impl Default for CameraConfig {
 
 #[must_use]
 pub fn default_camera_device() -> String {
-    if cfg!(target_os = "linux") {
-        "/dev/video0"
-    } else if cfg!(target_os = "macos") {
-        "0"
-    } else {
-        "video=Integrated Camera"
-    }
-    .to_owned()
+    if cfg!(target_os = "linux") { "/dev/video0" } else { "0" }.to_owned()
+}
+
+/// The native camera index `device` names: `/dev/videoN` or a bare `N`.
+fn native_index(device: &str) -> Option<u32> {
+    device.strip_prefix("/dev/video").unwrap_or(device).parse().ok()
+}
+
+/// How frames are produced.
+#[derive(Debug)]
+enum Source {
+    /// A local camera read on the capture thread.
+    Native,
+    /// ffmpeg pulling a network stream.
+    Ffmpeg(Child),
 }
 
 /// Webcam capture on its own thread, publishing every frame into a [`LatestFrame`].
 #[derive(Debug)]
 pub struct Camera {
-    process: Child,
+    source: Source,
     stop: Arc<AtomicBool>,
     reader: Option<JoinHandle<()>>,
     device: String,
@@ -47,6 +64,28 @@ pub struct Camera {
 
 impl Camera {
     pub fn start(config: &CameraConfig, output: Arc<LatestFrame>) -> Result<Self> {
+        match native_index(&config.device) {
+            Some(index) if !is_network_source(&config.device) => Ok(Self::start_native(index, config, output)?),
+            _ => Self::start_ffmpeg(config, output),
+        }
+    }
+
+    fn start_native(index: u32, config: &CameraConfig, output: Arc<LatestFrame>) -> Result<Self> {
+        let (stop, last_error) = (Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(None)));
+        let (stopped, failure, config_copy) = (stop.clone(), last_error.clone(), config.clone());
+        let reader = std::thread::Builder::new().name("capture".into()).spawn(move || {
+            if let Err(error) = capture_native(index, &config_copy, &output, &stopped) {
+                *failure.lock() = Some(error);
+            }
+            // A clean stop leaves no error; anything else (unplugged camera) explains itself.
+            if !stopped.load(Ordering::Relaxed) && failure.lock().is_none() {
+                *failure.lock() = Some("no more frames".to_owned());
+            }
+        })?;
+        Ok(Self { source: Source::Native, stop, reader: Some(reader), device: config.device.clone(), last_error })
+    }
+
+    fn start_ffmpeg(config: &CameraConfig, output: Arc<LatestFrame>) -> Result<Self> {
         let mut cmd = ffmpeg();
         cmd.args(input_args(config, std::env::consts::OS)).args(output_args(config)).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut process = spawn(&mut cmd)?;
@@ -75,14 +114,92 @@ impl Camera {
                 output.publish(frame);
             }
         })?;
-        Ok(Self { process, stop, reader: Some(reader), device: config.device.clone(), last_error })
+        Ok(Self { source: Source::Ffmpeg(process), stop, reader: Some(reader), device: config.device.clone(), last_error })
     }
 
-    /// Why the camera stopped, once ffmpeg has exited; `None` while it is still running.
+    /// Why the camera stopped, once it has; `None` while it is still running.
     pub fn failure(&mut self) -> Option<String> {
-        self.process.try_wait().ok().flatten()?;
+        match &mut self.source {
+            Source::Native => {
+                self.reader.as_ref().is_some_and(JoinHandle::is_finished).then_some(())?;
+            }
+            Source::Ffmpeg(process) => {
+                process.try_wait().ok().flatten()?;
+            }
+        }
         Some(explain_failure(&self.device, self.last_error.lock().as_deref()))
     }
+}
+
+/// Read camera `index` until `stop` is set, converting every frame to BGR at the configured size.
+fn capture_native(index: u32, config: &CameraConfig, output: &LatestFrame, stop: &AtomicBool) -> std::result::Result<(), String> {
+    request_camera_access();
+    let wanted = CameraFormat::new_from(config.width as u32, config.height as u32, FrameFormat::MJPEG, config.fps);
+    let request = RequestedFormat::with_formats(RequestedFormatType::Closest(wanted), &NATIVE_FORMATS);
+    let mut camera = nokhwa::Camera::new(CameraIndex::Index(index), request).map_err(|e| e.to_string())?;
+    camera.open_stream().map_err(|e| e.to_string())?;
+    let (width, height) = (config.width, config.height);
+    // The camera's own size when it can't deliver the configured one; letterboxed afterwards.
+    let mut native = Vec::new();
+    while !stop.load(Ordering::Relaxed) {
+        let format = pixel_format(camera.frame_format());
+        let resolution = camera.resolution();
+        let (src_w, src_h) = (resolution.width() as usize, resolution.height() as usize);
+        let raw = camera.frame_raw().map_err(|e| e.to_string())?;
+        let mut frame = output.spare(width, height);
+        if (src_w, src_h) == (width, height) {
+            convert::to_bgr(format, &raw, width, height, &mut frame.data).map_err(|e| e.to_string())?;
+        } else {
+            native.resize(src_w * src_h * weshy_core::Frame::CHANNELS, 0);
+            convert::to_bgr(format, &raw, src_w, src_h, &mut native).map_err(|e| e.to_string())?;
+            convert::letterbox(&native, src_w, src_h, &mut frame.data, width, height);
+        }
+        output.publish(frame);
+    }
+    let _ = camera.stop_stream();
+    Ok(())
+}
+
+fn pixel_format(format: FrameFormat) -> PixelFormat {
+    match format {
+        FrameFormat::MJPEG => PixelFormat::Mjpeg,
+        FrameFormat::YUYV => PixelFormat::Yuyv,
+        FrameFormat::NV12 => PixelFormat::Nv12,
+        FrameFormat::RAWRGB => PixelFormat::Rgb,
+        FrameFormat::RAWBGR => PixelFormat::Bgr,
+        FrameFormat::GRAY => PixelFormat::Gray,
+    }
+}
+
+/// macOS asks the user before an app may use the camera; wait for their answer once.
+#[cfg(target_os = "macos")]
+fn request_camera_access() {
+    /// How long to wait for the user to answer the system's camera prompt.
+    const PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+    if nokhwa::nokhwa_check() {
+        return;
+    }
+    let (answered, answer) = std::sync::mpsc::channel();
+    nokhwa::nokhwa_initialize(move |_granted| {
+        let _ = answered.send(());
+    });
+    let _ = answer.recv_timeout(PROMPT_TIMEOUT);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_camera_access() {}
+
+/// Local cameras as `(index, name)`, from the platform's native API.
+pub(crate) fn native_cameras() -> Vec<(u32, String)> {
+    request_camera_access();
+    nokhwa::query(ApiBackend::Auto)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|info| match info.index() {
+            CameraIndex::Index(index) => Some((*index, info.human_name())),
+            CameraIndex::String(_) => None,
+        })
+        .collect()
 }
 
 /// A user-facing explanation of why capture from `device` failed, from ffmpeg's last error line.
@@ -99,9 +216,9 @@ fn explain_failure(device: &str, ffmpeg_error: Option<&str>) -> String {
         if has("404") || has("not found") || has("invalid data") {
             return format!("{device} answered, but not with video. Paste the stream address the camera app shows.");
         }
-    } else if has("busy") {
+    } else if has("busy") || has("in use") {
         return format!("{device} is in use by another app. Close it and start again.");
-    } else if has("no such file") || has("no such device") {
+    } else if has("no such file") || has("no such device") || has("not found") || has("could not open") {
         return format!("Camera {device} was not found. Is it plugged in?");
     }
     format!("The camera stopped: {detail}")
@@ -166,8 +283,10 @@ fn output_args(config: &CameraConfig) -> Vec<String> {
 impl Drop for Camera {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        let _ = self.process.kill();
-        let _ = self.process.wait();
+        if let Source::Ffmpeg(process) = &mut self.source {
+            let _ = process.kill();
+            let _ = process.wait();
+        }
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
@@ -206,6 +325,13 @@ mod tests {
         assert_eq!(stream_url("http://192.168.1.3:8080"), "http://192.168.1.3:8080/video");
         assert_eq!(stream_url("http://192.168.1.3:4747/mjpegfeed"), "http://192.168.1.3:4747/mjpegfeed");
         assert_eq!(stream_url("rtsp://10.0.0.2:8554/live"), "rtsp://10.0.0.2:8554/live");
+    }
+
+    #[test]
+    fn local_devices_are_read_natively() {
+        assert_eq!(native_index("/dev/video2"), Some(2));
+        assert_eq!(native_index("1"), Some(1));
+        assert_eq!(native_index("http://192.168.1.3:8080/"), None);
     }
 
     #[test]

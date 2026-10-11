@@ -1,4 +1,4 @@
-use crate::ffmpeg::{ffmpeg, ffprobe, raw_bgr_input, spawn};
+use crate::ffmpeg::{ffmpeg, ffmpeg_program, raw_bgr_input, spawn};
 use crate::{Error, FrameSink, Result};
 use std::io::Read;
 use std::process::{Child, ChildStdout, Command, Stdio};
@@ -32,45 +32,42 @@ impl VideoInfo {
     }
 }
 
-/// Read the first video stream's geometry and frame rate.
+/// Read the first video stream's geometry and frame rate from what `ffmpeg -i` prints, so no
+/// separate ffprobe is needed.
 pub fn probe(path: &str) -> Result<VideoInfo> {
-    let output = ffprobe()
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,avg_frame_rate,nb_frames:format=duration",
-            "-of",
-            "default=nw=1",
-            path,
-        ])
+    let output = ffmpeg_program()
+        .args(["-hide_banner", "-nostdin", "-i", path])
         .output()
-        .map_err(|source| Error::Spawn { program: "ffprobe".into(), source })?;
-    parse_probe(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| Error::NoVideoStream(path.to_owned()))
+        .map_err(|source| Error::Spawn { program: "ffmpeg".into(), source })?;
+    parse_probe(&String::from_utf8_lossy(&output.stderr)).ok_or_else(|| Error::NoVideoStream(path.to_owned()))
 }
 
-/// Parse ffprobe's `key=value` output; `None` without a video stream.
+/// Parse `ffmpeg -i`'s input description; `None` without a video stream.
+///
+/// ```text
+///   Duration: 00:00:10.01, start: 0.000000, bitrate: 484 kb/s
+///   Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv), 1920x1080 [SAR 1:1 DAR 16:9], 29.97 fps, ...
+/// ```
 fn parse_probe(text: &str) -> Option<VideoInfo> {
-    let field = |key: &str| {
-        text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=')).map(str::trim).filter(|v| !v.is_empty() && *v != "N/A")
-    };
-    let number = |key: &str| field(key).and_then(|v| v.parse::<usize>().ok());
-    let fps = field("avg_frame_rate")
-        .and_then(|rate| {
-            let (n, d) = rate.split_once('/')?;
-            let (n, d) = (n.parse::<f64>().ok()?, d.parse::<f64>().ok()?);
-            (d > 0.0 && n > 0.0).then(|| n / d)
-        })
+    let video = text.lines().find(|line| line.trim_start().starts_with("Stream #") && line.contains(": Video: "))?;
+    let parts: Vec<&str> = video.split(", ").map(str::trim).collect();
+    let (width, height) = parts.iter().find_map(|part| {
+        let (w, h) = part.split_whitespace().next()?.split_once('x')?;
+        let (w, h) = (w.parse::<usize>().ok()?, h.parse::<usize>().ok()?);
+        (w > 0 && h > 0).then_some((w, h))
+    })?;
+    let fps = parts
+        .iter()
+        .find_map(|part| part.strip_suffix(" fps")?.parse::<f64>().ok())
+        .filter(|fps| fps.is_finite() && *fps > 0.0)
         .unwrap_or(FALLBACK_FPS);
-    Some(VideoInfo {
-        width: number("width")?,
-        height: number("height")?,
-        fps,
-        frame_count: field("nb_frames").and_then(|n| n.parse().ok()),
-        duration: field("duration").and_then(|d| d.parse().ok()).filter(|d: &f64| d.is_finite() && *d > 0.0),
-    })
+    let duration = text.lines().find_map(|line| {
+        let clock = line.trim_start().strip_prefix("Duration: ")?.split(',').next()?;
+        let mut fields = clock.split(':').map(|f| f.parse::<f64>().ok());
+        let (h, m, s) = (fields.next()??, fields.next()??, fields.next()??);
+        Some(h.mul_add(3600.0, m.mul_add(60.0, s)))
+    });
+    Some(VideoInfo { width, height, fps, frame_count: None, duration: duration.filter(|d| d.is_finite() && *d > 0.0) })
 }
 
 /// Decodes a video file into BGR frames.
@@ -187,18 +184,24 @@ mod tests {
 
     #[test]
     fn parses_probe_output() {
-        let info = parse_probe("width=1920\nheight=1080\navg_frame_rate=30000/1001\nnb_frames=N/A\nduration=10.010000\n").unwrap();
+        let text = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'clip.mp4':
+  Duration: 00:00:10.01, start: 0.000000, bitrate: 484 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 482 kb/s, 29.97 fps, 29.97 tbr, 30k tbn (default)
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+At least one output file must be specified";
+        let info = parse_probe(text).unwrap();
         assert_eq!((info.width, info.height, info.frame_count), (1920, 1080, None));
         assert!((info.fps - 29.97).abs() < 0.01);
         assert_eq!(info.total_frames(), Some(300));
-        assert!(parse_probe("duration=3.0\n").is_none());
+        assert!(parse_probe("  Duration: 00:00:03.00, start: 0.0\n  Stream #0:0: Audio: aac, 44100 Hz").is_none());
     }
 
     #[test]
-    fn falls_back_when_the_rate_is_unknown() {
-        let info = parse_probe("width=64\nheight=48\navg_frame_rate=0/0\nnb_frames=20\n").unwrap();
+    fn falls_back_when_the_rate_or_duration_is_unknown() {
+        let info = parse_probe("  Duration: N/A, bitrate: N/A\n  Stream #0:0: Video: png, rgb24(pc), 64x48, 25 tbr").unwrap();
+        assert_eq!((info.width, info.height), (64, 48));
         assert_eq!(info.fps, FALLBACK_FPS);
-        assert_eq!(info.seconds(), Some(20.0 / FALLBACK_FPS));
+        assert_eq!(info.duration, None);
     }
 
     #[test]

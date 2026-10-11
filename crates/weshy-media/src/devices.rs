@@ -2,13 +2,11 @@
 //!
 //! - Linux: `/sys/class/video4linux`, no device is opened. A UVC webcam exposes a capture node
 //!   (`index` 0) and a metadata node (`index` 1); v4l2loopback devices are virtual.
-//! - Windows: `ffmpeg -list_devices true -f dshow`; macOS: `ffmpeg -list_devices true -f avfoundation`.
+//! - Windows and macOS: the native camera API (Media Foundation / AVFoundation), by index.
 //!
 //! Parsing is kept apart from I/O so it is unit-tested on captured listings.
 
-use crate::ffmpeg::ffmpeg_program;
 use std::path::Path;
-use std::process::Stdio;
 
 /// The command that creates a v4l2loopback device weshy can write to (`/dev/video10`, named "weshy").
 pub const LOOPBACK_MODPROBE: &str = "sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=weshy exclusive_caps=1";
@@ -25,7 +23,7 @@ const PRIMARY_NODE_INDEX: u32 = 0;
 /// One camera or virtual-camera device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VideoDevice {
-    /// What ffmpeg opens: `/dev/video0`, an avfoundation index, or `video=<name>` for dshow.
+    /// What [`crate::CameraConfig::device`] takes: `/dev/video0` on Linux, the camera's index elsewhere.
     pub id: String,
     /// Human-readable name.
     pub name: String,
@@ -52,7 +50,7 @@ pub struct Devices {
     pub loopback: LoopbackStatus,
 }
 
-/// Scan for cameras and virtual-camera outputs. Blocking (runs ffmpeg on Windows and macOS).
+/// Scan for cameras and virtual-camera outputs. Blocking (asks the camera API on Windows and macOS).
 #[must_use]
 pub fn list_devices() -> Devices {
     match std::env::consts::OS {
@@ -61,8 +59,10 @@ pub fn list_devices() -> Devices {
             let loaded = Path::new(SYSFS_LOOPBACK_MODULE).exists();
             classify_v4l2(&nodes, loaded)
         }
-        "macos" => Devices { cameras: parse_avfoundation(&list_ffmpeg_devices("avfoundation", "")), ..Devices::default() },
-        _ => Devices { cameras: parse_dshow(&list_ffmpeg_devices("dshow", "dummy")), ..Devices::default() },
+        _ => Devices {
+            cameras: crate::camera::native_cameras().into_iter().map(|(index, name)| VideoDevice { id: index.to_string(), name }).collect(),
+            ..Devices::default()
+        },
     }
 }
 
@@ -139,73 +139,6 @@ fn read_sysfs(root: &Path) -> Vec<V4l2Node> {
         .collect()
 }
 
-/// ffmpeg prints device lists to stderr at info level, then fails on the dummy input.
-fn list_ffmpeg_devices(format: &str, input: &str) -> String {
-    let output = ffmpeg_program()
-        .args(["-hide_banner", "-nostdin", "-list_devices", "true", "-f", format, "-i", input])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .output();
-    output.map(|o| String::from_utf8_lossy(&o.stderr).into_owned()).unwrap_or_default()
-}
-
-/// Strip the `[dshow @ 0x…] ` / `[AVFoundation indev @ 0x…] ` prefix.
-fn message(line: &str) -> &str {
-    match line.strip_prefix('[').and_then(|rest| rest.split_once("] ")) {
-        Some((_, text)) => text,
-        None => line,
-    }
-}
-
-/// Parse `ffmpeg -list_devices true -f dshow -i dummy` (both the ≥ 5.0 `"name" (video)` form and
-/// the older sectioned form). Returns video devices as `video=<name>`.
-#[must_use]
-pub fn parse_dshow(listing: &str) -> Vec<VideoDevice> {
-    let mut devices = Vec::new();
-    let mut in_video_section = false;
-    for line in listing.lines().map(message) {
-        let text = line.trim();
-        if text.starts_with("DirectShow video devices") {
-            in_video_section = true;
-            continue;
-        }
-        if text.starts_with("DirectShow audio devices") {
-            in_video_section = false;
-            continue;
-        }
-        let Some(rest) = text.strip_prefix('"') else { continue };
-        let Some((name, kind)) = rest.split_once('"') else { continue };
-        let kind = kind.trim();
-        // `(video)`, `(audio, video)`, or nothing in the legacy sectioned form.
-        let video = kind.contains("video") || (kind.is_empty() && in_video_section);
-        if video && !devices.iter().any(|d: &VideoDevice| d.name == name) {
-            devices.push(VideoDevice { id: format!("video={name}"), name: name.to_owned() });
-        }
-    }
-    devices
-}
-
-/// Parse `ffmpeg -f avfoundation -list_devices true -i ""`. Returns video devices by index.
-#[must_use]
-pub fn parse_avfoundation(listing: &str) -> Vec<VideoDevice> {
-    let mut devices = Vec::new();
-    let mut in_video_section = false;
-    for line in listing.lines().map(message) {
-        let text = line.trim();
-        if text.contains("video devices:") {
-            in_video_section = true;
-        } else if text.contains("audio devices:") {
-            in_video_section = false;
-        } else if in_video_section
-            && let Some((index, name)) = text.strip_prefix('[').and_then(|rest| rest.split_once("] "))
-            && index.parse::<u32>().is_ok()
-        {
-            devices.push(VideoDevice { id: index.to_owned(), name: name.trim().to_owned() });
-        }
-    }
-    devices
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,41 +174,5 @@ mod tests {
         let devices = classify_v4l2(&[node("video0", "Cam", Some(0), Some("uvcvideo"), false)], false);
         assert_eq!(devices.loopback, LoopbackStatus::NotLoaded);
         assert_eq!(devices.outputs.len(), 0);
-    }
-
-    #[test]
-    fn parses_modern_dshow_listing() {
-        let listing = r#"[dshow @ 0000020b] "Integrated Camera" (video)
-[dshow @ 0000020b]   Alternative name "@device_pnp_\\?\usb#vid_04f2"
-[dshow @ 0000020b] "OBS Virtual Camera" (none)
-[dshow @ 0000020b] "Microphone Array (Realtek)" (audio)
-[dshow @ 0000020b] "Logi Cam" (audio, video)
-dummy: Immediate exit requested"#;
-        let names: Vec<String> = parse_dshow(listing).into_iter().map(|d| d.id).collect();
-        assert_eq!(names, ["video=Integrated Camera", "video=Logi Cam"]);
-    }
-
-    #[test]
-    fn parses_legacy_dshow_listing() {
-        let listing = r#"[dshow @ 0x1] DirectShow video devices (some may be both video and audio devices)
-[dshow @ 0x1]  "HD Webcam"
-[dshow @ 0x1]     Alternative name "@device_pnp_x"
-[dshow @ 0x1] DirectShow audio devices
-[dshow @ 0x1]  "Microphone""#;
-        let devices = parse_dshow(listing);
-        assert_eq!(devices, [VideoDevice { id: "video=HD Webcam".into(), name: "HD Webcam".into() }]);
-    }
-
-    #[test]
-    fn parses_avfoundation_listing() {
-        let listing = "[AVFoundation indev @ 0x7f] AVFoundation video devices:
-[AVFoundation indev @ 0x7f] [0] FaceTime HD Camera
-[AVFoundation indev @ 0x7f] [1] Capture screen 0
-[AVFoundation indev @ 0x7f] AVFoundation audio devices:
-[AVFoundation indev @ 0x7f] [0] MacBook Pro Microphone
-: Input/output error";
-        let devices = parse_avfoundation(listing);
-        assert_eq!(devices.len(), 2);
-        assert_eq!(devices[0], VideoDevice { id: "0".into(), name: "FaceTime HD Camera".into() });
     }
 }

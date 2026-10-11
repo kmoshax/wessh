@@ -1,25 +1,43 @@
 use crate::{Error, Result};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-fn program(var: &str, default: &str) -> String {
-    std::env::var(var).unwrap_or_else(|_| default.to_owned())
+/// Overrides which ffmpeg is run.
+const FFMPEG_VAR: &str = "WESHY_FFMPEG";
+const EXE: &str = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+
+/// Where `weshy setup` puts its own ffmpeg on machines that have none.
+#[must_use]
+pub fn bundled_ffmpeg() -> PathBuf {
+    weshy_core::assets::data_dir().join("ffmpeg").join(EXE)
 }
 
-/// `ffmpeg` (or `$WESHY_FFMPEG`) without any arguments.
+/// An ffmpeg on `PATH`, found without running anything.
+#[must_use]
+pub fn system_ffmpeg() -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?).map(|dir| dir.join(EXE)).find(|path| path.is_file())
+}
+
+/// The ffmpeg weshy runs: `$WESHY_FFMPEG`, else the one `setup` installed, else the one on
+/// `PATH`; `None` when there is none.
+#[must_use]
+pub fn find_ffmpeg() -> Option<PathBuf> {
+    if let Some(program) = std::env::var_os(FFMPEG_VAR) {
+        return Some(program.into());
+    }
+    Some(bundled_ffmpeg()).filter(|path| path.is_file()).or_else(system_ffmpeg)
+}
+
+/// [`find_ffmpeg`] without any arguments (plain `ffmpeg` when there is none, so the error names it).
 pub fn ffmpeg_program() -> Command {
-    Command::new(program("WESHY_FFMPEG", "ffmpeg"))
+    Command::new(find_ffmpeg().as_deref().unwrap_or(Path::new(EXE)))
 }
 
-/// `ffmpeg` (or `$WESHY_FFMPEG`) with quiet, non-interactive defaults.
+/// [`ffmpeg_program`] with quiet, non-interactive defaults.
 pub fn ffmpeg() -> Command {
     let mut cmd = ffmpeg_program();
     cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin"]).stderr(Stdio::inherit());
     cmd
-}
-
-/// `ffprobe` (or `$WESHY_FFPROBE`).
-pub fn ffprobe() -> Command {
-    Command::new(program("WESHY_FFPROBE", "ffprobe"))
 }
 
 /// Arguments describing raw BGR frames on stdin.
