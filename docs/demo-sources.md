@@ -1,6 +1,6 @@
 # Demo sources
 
-The README montage contains twelve short excerpts processed locally with wessh, using MrBeast as the source face. Only the largest face in each frame was swapped; the footage is edited and does not imply endorsement or affiliation.
+The README demos use the same twelve short excerpts processed locally with wessh, using either MrBeast or Adolf Hitler as the source face. Only the largest face in each frame was swapped; the footage is edited and does not imply endorsement or affiliation.
 
 | Clip | Start in linked upload | Duration |
 | --- | --- | --- |
@@ -19,4 +19,8 @@ The README montage contains twelve short excerpts processed locally with wessh, 
 
 Source portrait: [MrBeast frontface 2021](https://commons.wikimedia.org/wiki/File:MrBeast_frontface_2021.png), by **Fidias on YouTube**, licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The portrait was used to compute the source identity; the target faces were altered. Original film and music-video footage remains credited to its respective creators.
 
-Processing: 640 × 360, 16 fps, CUDA, inswapper, pixel boost 256, XSeg occlusion, color correction 0.65, enhancement off, one face per frame. The Drake excerpt is cropped closer to emphasize the face. The README GIF is 480 × 270 at 10 fps with a 128-color palette.
+Processing: 640 × 360, 16 fps, CUDA, inswapper, pixel boost 256, XSeg occlusion, color correction 0.65, adaptive GFPGAN enhancement enabled, one face per frame. The Drake excerpt is cropped closer to emphasize the face. The README GIF is 480 × 270 at 10 fps with a 128-color palette.
+
+Additional source portrait: the user-provided restored image `Adolf_Hitler_cropped_restored.jpg`, included as [hitler.jpg](assets/hitler.jpg). This portrait supplies only the face identity in the additional edited demo; the excerpt sources and processing settings are the same as above.
+
+Both enhanced demos were generated locally with CUDA graphs disabled and reduced CUDA workspace/arena allocation to fit available GPU memory. Enhancement is adaptive and does not guarantee preservation of facial hair.
