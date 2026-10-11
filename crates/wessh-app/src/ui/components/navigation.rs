@@ -22,16 +22,15 @@ pub fn top_app_bar(ui: &mut Ui, title: &str, actions: impl FnOnce(&mut Ui)) {
     let logo_rect = Rect::from_center_size(pos2(rect.left() + RAIL_WIDTH / 2.0, rect.center().y), Vec2::splat(LOGO_SIZE));
     ui.painter().rect_filled(logo_rect, shape::SMALL, colors.primary_container);
     let logo_id = eframe::egui::Id::new("happy-face-logo");
-    let texture = ui.ctx().data_mut(|data| {
-        data.get_temp_mut_or_insert_with::<eframe::egui::TextureHandle>(logo_id, || {
-            let image = image::load_from_memory(include_bytes!("../../../assets/icon/happy-face.png"))
-                .expect("the embedded logo is a valid PNG")
-                .into_rgba8();
-            let pixels =
-                eframe::egui::ColorImage::from_rgba_unmultiplied([image.width() as usize, image.height() as usize], image.as_raw());
-            ui.ctx().load_texture("happy-face-logo", pixels, eframe::egui::TextureOptions::LINEAR)
-        })
-        .clone()
+    let cached = ui.ctx().data(|data| data.get_temp::<eframe::egui::TextureHandle>(logo_id));
+    let texture = cached.unwrap_or_else(|| {
+        let image = image::load_from_memory(include_bytes!("../../../assets/icon/happy-face.png"))
+            .expect("the embedded logo is a valid PNG")
+            .into_rgba8();
+        let pixels = eframe::egui::ColorImage::from_rgba_unmultiplied([image.width() as usize, image.height() as usize], image.as_raw());
+        let texture = ui.ctx().load_texture("happy-face-logo", pixels, eframe::egui::TextureOptions::LINEAR);
+        ui.ctx().data_mut(|data| data.insert_temp(logo_id, texture.clone()));
+        texture
     });
     ui.painter().image(
         texture.id(),

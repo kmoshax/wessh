@@ -293,7 +293,8 @@ impl Onboarding {
     }
 
     /// Draw the flow over the whole window.
-    pub fn ui(&mut self, ctx: &Context) -> Next {
+    pub fn ui(&mut self, root_ui: &mut Ui) -> Next {
+        let ctx = &root_ui.ctx().clone();
         self.poll(ctx);
         let now = ctx.input(|i| i.time);
         if self.pause_at.is_some_and(|at| now >= at) && self.step == Step::Download && self.run.is_some() {
@@ -303,7 +304,7 @@ impl Onboarding {
         let colors = theme::colors(ctx);
         let mut next = Next::Stay;
         let frame = Frame::new().fill(colors.surface).inner_margin(Margin::same(spacing::XL as i8));
-        eframe::egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+        eframe::egui::CentralPanel::default().frame(frame).show(root_ui, |ui| {
             let area = ui.max_rect();
             let header = Rect::from_min_size(area.min, vec2(area.width(), STEP_DOT + spacing::XL));
             step_indicator(ui, header, self.step, &colors);

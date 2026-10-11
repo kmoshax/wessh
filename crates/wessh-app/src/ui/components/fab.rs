@@ -40,7 +40,7 @@ pub struct ExtendedFab<'a> {
 
 impl<'a> ExtendedFab<'a> {
     /// A FAB; `id_salt` keeps its animations stable while its label changes.
-    pub fn new(id_salt: impl std::hash::Hash, icon: char, label: &'a str) -> Self {
+    pub fn new(id_salt: impl std::hash::Hash + std::fmt::Debug, icon: char, label: &'a str) -> Self {
         Self { id: Id::new(id_salt), icon, label, color: FabColor::Primary }
     }
 

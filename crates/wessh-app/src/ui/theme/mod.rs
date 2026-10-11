@@ -40,7 +40,7 @@ impl Default for ThemeConfig {
 /// Generate the scheme for `config` and make it the active style.
 pub fn apply(ctx: &egui::Context, config: ThemeConfig) {
     let colors = ColorScheme::from_seed(config.seed, config.brightness);
-    ctx.set_style(visuals::style(&colors));
+    ctx.set_global_style(visuals::style(&colors));
     ctx.data_mut(|data| data.insert_temp(scheme_id(), colors));
 }
 

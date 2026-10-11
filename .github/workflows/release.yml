@@ -22,9 +22,9 @@ env:
 jobs:
   verify:
     name: verify version, lints and tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: tag matches Cargo.toml
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -55,7 +55,7 @@ jobs:
           - { target: x86_64-apple-darwin, os: macos-latest }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup toolchain install && rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -77,21 +77,65 @@ jobs:
           $compilerPath = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe' }
           if (-not (Test-Path $compilerPath)) { throw 'Inno Setup compiler is missing from the runner' }
           "ISCC=$compilerPath" >> $env:GITHUB_ENV
+      - name: prepare standalone Linux packaging
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxrender1 libxfixes3 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1
+          arch="${{ matrix.target }}"
+          arch="${arch%%-*}"
+          tools="$RUNNER_TEMP/appimage-tools"
+          mkdir -p "$tools"
+          curl -fL --retry 3 "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$arch.AppImage" -o "$tools/linuxdeploy"
+          curl -fL --retry 3 "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$arch.AppImage" -o "$tools/appimagetool"
+          chmod +x "$tools/linuxdeploy" "$tools/appimagetool"
+          echo "LINUXDEPLOY=$tools/linuxdeploy" >> "$GITHUB_ENV"
+          echo "APPIMAGETOOL=$tools/appimagetool" >> "$GITHUB_ENV"
       - name: package
         shell: bash
         run: scripts/package.sh "${{ matrix.target }}" "${GITHUB_REF_NAME}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wessh-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
-  publish:
+  linux-portability:
+    name: AppImage on ${{ matrix.image }}
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:12, fedora:43, archlinux:latest]
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: wessh-x86_64-unknown-linux-gnu
+          path: dist
+      - name: launch standalone application
+        env:
+          TEST_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD:/work:ro" "$TEST_IMAGE" sh -ec '
+            if command -v apt-get >/dev/null; then
+              apt-get update && apt-get install -y xvfb xauth libgl1-mesa-dri libgl1
+            elif command -v dnf >/dev/null; then
+              dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers mesa-libGL
+            else
+              pacman -Syu --noconfirm xorg-server-xvfb xorg-xauth mesa libglvnd
+            fi
+            bash /work/scripts/linux/smoke-test.sh /work/dist/wessh-linux-x86_64.AppImage
+          '
+
+  publish:
+    needs: [build, linux-portability]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -99,7 +143,7 @@ jobs:
         working-directory: dist
         run: sha256sum wessh-* > SHA256SUMS
       # Published right away: the installers fetch the latest published release.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true

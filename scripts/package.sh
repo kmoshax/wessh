@@ -7,7 +7,7 @@
 #   dist/wessh-<target>.tar.gz             Linux, macOS
 #   dist/wessh-<target>.zip                Windows (wessh.exe and wessh-cli.exe)
 # and the download people double-click:
-#   dist/wessh-linux-<arch>.AppImage       with APPIMAGETOOL set to an appimagetool executable
+#   dist/wessh-linux-<arch>.AppImage       requires LINUXDEPLOY and APPIMAGETOOL
 #   dist/wessh-windows-x64-setup.exe       with ISCC set to Inno Setup's compiler
 #   dist/wessh-macos-<arch>.dmg            on macOS (iconutil, sips, hdiutil, codesign)
 #
@@ -22,7 +22,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 version="${2:-v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)}"
 version="${version#v}"
-release="target/$target/release"
+release="${WESSH_RELEASE_DIR:-target/$target/release}"
 icon=crates/wessh-app/assets/icon
 mkdir -p dist
 
@@ -87,20 +87,25 @@ case "$target" in
     tar -C dist -czf "dist/wessh-$target.tar.gz" "wessh-$target"
     rm -rf "dist/wessh-$target"
     echo "dist/wessh-$target.tar.gz"
-    if [[ -n "${APPIMAGETOOL:-}" ]]; then
-        appdir=dist/wessh.AppDir
-        rm -rf "$appdir"
-        mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/icons/hicolor/256x256/apps"
-        cp "$release/wessh" "$appdir/usr/bin/"
-        cp scripts/linux/wessh.desktop "$appdir/wessh.desktop"
-        cp scripts/linux/wessh.desktop "$appdir/usr/share/applications/wessh.desktop"
-        cp "$icon/wessh-256.png" "$appdir/wessh.png"
-        cp "$icon/wessh-256.png" "$appdir/usr/share/icons/hicolor/256x256/apps/wessh.png"
-        ln -s usr/bin/wessh "$appdir/AppRun"
-        ARCH="$arch" "$APPIMAGETOOL" --no-appstream "$appdir" "dist/wessh-linux-$arch.AppImage"
-        rm -rf "$appdir"
-        echo "dist/wessh-linux-$arch.AppImage"
-    fi
+    : "${LINUXDEPLOY:?set LINUXDEPLOY to the linuxdeploy executable}"
+    : "${APPIMAGETOOL:?set APPIMAGETOOL to the appimagetool executable}"
+    appdir=dist/wessh.AppDir
+    rm -rf "$appdir"
+    libraries=()
+    # Window libraries are loaded at runtime, so ldd alone cannot discover them.
+    for name in libX11.so.6 libXcursor.so.1 libXrandr.so.2 libXi.so.6 libXinerama.so.1 libXrender.so.1 libXfixes.so.3 libxkbcommon.so.0 libxkbcommon-x11.so.0 libwayland-client.so.0 libwayland-cursor.so.0 libwayland-egl.so.1; do
+        library="$(ldconfig -p | awk -v name="$name" '$1 == name && !found { result = $NF; found = 1 } END { if (found) print result }')"
+        [[ -n "$library" ]] || { echo "missing build dependency: $name" >&2; exit 1; }
+        libraries+=(--library "$library")
+    done
+    APPIMAGE_EXTRACT_AND_RUN=1 "$LINUXDEPLOY" --appdir "$appdir" \
+        --executable "$release/wessh" --desktop-file scripts/linux/wessh.desktop \
+        --icon-file "$icon/wessh-256.png" --icon-filename wessh \
+        --custom-apprun scripts/linux/AppRun "${libraries[@]}"
+    # glibc and graphics drivers belong to the host; never ship a vendor GPU driver.
+    APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" "$APPIMAGETOOL" --no-appstream "$appdir" "dist/wessh-linux-$arch.AppImage"
+    rm -rf "$appdir"
+    echo "dist/wessh-linux-$arch.AppImage"
     ;;
 
 *)

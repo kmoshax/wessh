@@ -20,7 +20,7 @@ use crate::jobs::JobRunner;
 use crate::live::{EngineOptions, LiveSession, Phase, Snapshot};
 use components::navigation::{RAIL_WIDTH, TOP_APP_BAR_HEIGHT};
 use components::{Chip, IconButton, drop_overlay, navigation_rail, top_app_bar};
-use eframe::egui::{self, CentralPanel, Context, Key, Margin, SidePanel, TopBottomPanel};
+use eframe::egui::{self, CentralPanel, Context, Key, Margin, Panel};
 use file_picker::{IMAGE_EXTENSIONS, has_extension};
 use screens::onboarding::{Next, Onboarding};
 use screens::{ImageScreen, LiveScreen, Screen, VideoScreen};
@@ -36,16 +36,16 @@ const APP_NAME: &str = "wessh";
 
 /// Open the desktop app.
 pub fn run(options: Options) -> anyhow::Result<()> {
-    let native = eframe::NativeOptions {
+    let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(INITIAL_WINDOW)
             .with_min_inner_size(MIN_WINDOW)
             .with_title(APP_NAME)
             .with_app_id("wessh")
             .with_icon(window_icon()),
-        vsync: false,
         ..Default::default()
     };
+    native.glow_options.vsync = false;
     eframe::run_native(APP_NAME, native, Box::new(move |cc| Ok(Box::new(Shell::new(&cc.egui_ctx, options)))))
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
@@ -91,9 +91,10 @@ impl Shell {
 }
 
 impl eframe::App for Shell {
-    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
         if let Some(onboarding) = &mut self.onboarding {
-            if onboarding.ui(ctx) == Next::OpenApp {
+            if onboarding.ui(ui) == Next::OpenApp {
                 self.open_app(ctx);
             } else if let Some(capture) = &mut self.capture {
                 capture.update(ctx, &Phase::Ready);
@@ -101,7 +102,7 @@ impl eframe::App for Shell {
             return;
         }
         if let Some(app) = &mut self.app {
-            app.update(ctx, frame);
+            app.update(ui, frame);
         }
     }
 }
@@ -164,7 +165,7 @@ impl App {
     /// Live: dropped photos become the source face. Image / Video: dropped files become the
     /// target, except photos dropped on the Video screen, which become the source face.
     fn handle_drops(&mut self, ctx: &Context, snapshot: &Snapshot) {
-        let dropped = ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
         let Some(path) = dropped else { return };
         match self.screen {
             Screen::Image => self.image.set_target(ctx, path),
@@ -190,10 +191,11 @@ impl App {
         }
     }
 
-    fn app_bar(&mut self, ctx: &Context, snapshot: &Snapshot, expanded: bool) {
+    fn app_bar(&mut self, root_ui: &mut egui::Ui, snapshot: &Snapshot, expanded: bool) {
+        let ctx = &root_ui.ctx().clone();
         let colors = theme::colors(ctx);
         let frame = egui::Frame::new().fill(colors.surface);
-        TopBottomPanel::top("app-bar").exact_height(TOP_APP_BAR_HEIGHT).frame(frame).show_separator_line(false).show(ctx, |ui| {
+        Panel::top("app-bar").exact_size(TOP_APP_BAR_HEIGHT).frame(frame).show_separator_line(false).show(root_ui, |ui| {
             let mut toggle_theme = false;
             let mut toggle_sheet = false;
             top_app_bar(ui, APP_NAME, |ui| {
@@ -214,10 +216,11 @@ impl App {
         });
     }
 
-    fn rail(&mut self, ctx: &Context) {
+    fn rail(&mut self, root_ui: &mut egui::Ui) {
+        let ctx = &root_ui.ctx().clone();
         let colors = theme::colors(ctx);
         let frame = egui::Frame::new().fill(colors.surface);
-        SidePanel::left("rail").exact_width(RAIL_WIDTH).resizable(false).frame(frame).show_separator_line(false).show(ctx, |ui| {
+        Panel::left("rail").exact_size(RAIL_WIDTH).resizable(false).frame(frame).show_separator_line(false).show(root_ui, |ui| {
             navigation_rail(ui, &mut self.screen, &Screen::DESTINATIONS);
         });
     }
@@ -236,18 +239,19 @@ fn backend_chip(ui: &mut egui::Ui, snapshot: &Snapshot) {
 }
 
 impl App {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &root_ui.ctx().clone();
         let snapshot = self.session.snapshot();
         self.handle_drops(ctx, &snapshot);
         self.live.sync(ctx, &self.session, &snapshot);
         self.handle_shortcuts(ctx, &snapshot);
 
         let expanded = ctx.content_rect().width() - RAIL_WIDTH >= EXPANDED_BREAKPOINT;
-        self.app_bar(ctx, &snapshot, expanded);
-        self.rail(ctx);
+        self.app_bar(root_ui, &snapshot, expanded);
+        self.rail(root_ui);
         let colors = theme::colors(ctx);
         let margin = Margin { left: 0, right: spacing::XL as i8, top: 0, bottom: spacing::XL as i8 };
-        CentralPanel::default().frame(egui::Frame::new().fill(colors.surface).inner_margin(margin)).show(ctx, |ui| {
+        CentralPanel::default().frame(egui::Frame::new().fill(colors.surface).inner_margin(margin)).show(root_ui, |ui| {
             let (session, jobs) = (&self.session, &self.jobs);
             match self.screen {
                 Screen::Live => self.live.ui(ui, session, &snapshot, expanded),

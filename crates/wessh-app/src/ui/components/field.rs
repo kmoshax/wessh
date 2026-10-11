@@ -84,7 +84,7 @@ impl Widget for TextField<'_> {
         let text_color = colors.on_surface;
         let edit = egui::TextEdit::singleline(self.text)
             .id(edit_id)
-            .frame(false)
+            .frame(eframe::egui::Frame::NONE)
             .margin(Margin::ZERO)
             .font(TypeRole::BodyLarge.text_style())
             .text_color(text_color)

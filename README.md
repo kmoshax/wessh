@@ -8,38 +8,17 @@ no Python, no PyTorch and no multi-gigabyte environment to build.
 
 ## Quick start
 
-1. **Download** the archive for your platform from
-   [Releases](https://github.com/kmoshax/wessh/releases) and unpack it, or use the installer:
+Download the file for your platform from [Releases](https://github.com/kmoshax/wessh/releases):
 
-   ```sh
-   # Linux / macOS
-   curl -fsSL https://raw.githubusercontent.com/kmoshax/wessh/main/scripts/install.sh | sh
-   ```
+- **Linux:** `wessh-linux-x86_64.AppImage` (or `aarch64` for ARM). Make it executable in your file manager and open it. No distribution-specific package or administrator access is needed.
+- **Windows:** `wessh-windows-x64-setup.exe`. Install, then open wessh from the Start menu.
+- **macOS:** open the DMG and drag wessh into Applications. The bundle currently uses an ad-hoc signature, not Apple notarization.
 
-   ```powershell
-   # Windows
-   irm https://raw.githubusercontent.com/kmoshax/wessh/main/scripts/install.ps1 | iex
-   ```
+The first-run screen detects your hardware and downloads the runtime and models once, with pause and resume. Video tools download inside the app when needed.
 
-2. **Set up** the machine. `wessh setup` detects your GPU and driver, installs the matching
-   ONNX Runtime build, the CUDA / cuDNN and TensorRT libraries it needs (NVIDIA only, no CUDA
-   toolkit install required) and wessh's curated models. Starting the app without it works too:
-   a first-run screen downloads the same things, with pause and resume:
+Linux AppImages include the X11/Wayland window libraries. They target glibc 2.35 or newer and use the host's graphics drivers. The release workflow tests graphical startup on Debian, Fedora and Arch. Alpine/musl is not supported. If FUSE is unavailable, run `./wessh-linux-x86_64.AppImage --appimage-extract-and-run`. A virtual webcam on Linux still requires the host's v4l2loopback kernel module; image processing and the app preview do not.
 
-   ```sh
-   wessh setup --dry-run   # optional: see what would be downloaded, and how much
-   wessh setup
-   ```
-
-3. **Run** it:
-
-   ```sh
-   wessh
-   ```
-
-If anything misbehaves, `wessh doctor` reports what is installed and prints the exact command
-that fixes each problem. The only thing `wessh setup` can't install for you is ffmpeg (used for
-the camera and video modes); it prints the command for your OS if ffmpeg is missing.
+Portable archives and the command-line installers in `scripts/` remain available for terminal users. `wessh doctor` diagnoses runtime and model installation.
 
 ## Features
 
