@@ -45,7 +45,11 @@ case "$target" in
     (cd dist/stage && if command -v 7z >/dev/null; then 7z a -tzip -bso0 "../wessh-$target.zip" .; else zip -qr "../wessh-$target.zip" .; fi)
     echo "dist/wessh-$target.zip"
     if [[ -n "${ISCC:-}" ]]; then
-        "$ISCC" /Q "/DAppVersion=$version" "/DSourceDir=$root/dist/stage" "/DOutputDir=$root/dist" scripts/windows/wessh.iss
+        # Git Bash must not rewrite Inno Setup switches as Unix paths.
+        MSYS_NO_PATHCONV=1 "$ISCC" /Q "/DAppVersion=$version" \
+            "/DSourceDir=$(cygpath -w "$root/dist/stage")" \
+            "/DOutputDir=$(cygpath -w "$root/dist")" \
+            "$(cygpath -w "$root/scripts/windows/wessh.iss")"
         echo "dist/wessh-windows-x64-setup.exe"
     fi
     rm -rf dist/stage
