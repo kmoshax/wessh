@@ -62,6 +62,21 @@ jobs:
           key: ${{ matrix.target }}
       - name: build
         run: cargo build --release --locked --target ${{ matrix.target }} -p wessh
+      - name: build Windows console executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build --release --locked --target ${{ matrix.target }} -p wessh --features console --target-dir target-console
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "target-console/${{ matrix.target }}/release/wessh.exe" "target/${{ matrix.target }}/release/wessh-cli.exe"
+      - name: locate Windows installer compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          $compilerPath = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe' }
+          if (-not (Test-Path $compilerPath)) { throw 'Inno Setup compiler is missing from the runner' }
+          "ISCC=$compilerPath" >> $env:GITHUB_ENV
       - name: package
         shell: bash
         run: scripts/package.sh "${{ matrix.target }}" "${GITHUB_REF_NAME}"
