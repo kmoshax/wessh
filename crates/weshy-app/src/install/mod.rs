@@ -1,6 +1,7 @@
 //! Making a machine ready to run weshy: the ONNX Runtime build for its GPU and driver, NVIDIA's
-//! CUDA / cuDNN / TensorRT libraries from their Python wheels, and the curated models
-//! ([`weshy_core::assets::required`]). Used by `weshy setup` and by the app's onboarding.
+//! CUDA / cuDNN / TensorRT libraries from their Python wheels, the curated models
+//! ([`weshy_core::assets::required`]) and, for video files and phone cameras only, an ffmpeg when
+//! the machine has none. Used by `weshy setup`, the app's onboarding and the Video screen.
 //!
 //! 1. [`Plan::check`] looks at the files on disk only (no network) to find what is missing —
 //!    cheap enough to run on every start-up.
@@ -46,6 +47,17 @@ pub struct Request {
     /// The runtime comes from elsewhere (`--ort`, `ORT_DYLIB_PATH`, next to the executable),
     /// so neither it nor its CUDA libraries are installed.
     pub external_runtime: bool,
+    /// Install an ffmpeg if there is none (video files and network cameras need one; live
+    /// webcam mode doesn't).
+    pub ffmpeg: bool,
+}
+
+impl Request {
+    /// Only an ffmpeg, for the Video screen.
+    #[must_use]
+    pub fn ffmpeg_only() -> Self {
+        Self { tensorrt: false, ort_version: String::new(), force: false, models: Vec::new(), external_runtime: true, ffmpeg: true }
+    }
 }
 
 /// The machine being set up.
@@ -85,6 +97,7 @@ pub enum Kind {
     CudaLibrary,
     TensorRt,
     Model,
+    Ffmpeg,
 }
 
 /// Where a component ends up.
@@ -94,6 +107,8 @@ pub enum Destination {
     Libraries(PathBuf),
     /// A single file downloaded to this path.
     File(PathBuf),
+    /// One executable extracted from an archive to this path.
+    Program(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +116,7 @@ enum Source {
     Runtime(Flavour),
     Wheel(Wheel),
     Model(Asset),
+    Ffmpeg,
 }
 
 /// One component of the installation.
@@ -133,7 +149,7 @@ impl Item {
     fn download_path(&self, download: &Download) -> PathBuf {
         match &self.destination {
             Destination::File(path) => path.clone(),
-            Destination::Libraries(_) => downloads_dir().join(&download.file_name),
+            Destination::Libraries(_) | Destination::Program(_) => downloads_dir().join(&download.file_name),
         }
     }
 }
@@ -199,6 +215,20 @@ impl Plan {
                 destination: Destination::File(path),
                 source: Source::Model(*asset),
                 download: None,
+            });
+        }
+        if request.ffmpeg && weshy_media::system_ffmpeg().is_none() {
+            let path = weshy_media::bundled_ffmpeg();
+            items.push(Item {
+                name: sources::FFMPEG_PACKAGE.to_owned(),
+                label: "Video tools (ffmpeg)".to_owned(),
+                kind: Kind::Ffmpeg,
+                version: String::new(),
+                installed: !pending(path.is_file()),
+                destination: Destination::Program(path),
+                source: Source::Ffmpeg,
+                download: None,
+                partial: 0,
             });
         }
         Self { host, items, ort_version: request.ort_version.clone() }
@@ -328,6 +358,7 @@ pub fn resolve(plan: &mut Plan, reporter: &Reporter) -> Result<()> {
             Source::Runtime(flavour) => sources::ort_release(target, *flavour, &plan.ort_version).map(|d| (plan.ort_version.clone(), d)),
             Source::Wheel(wheel) => wheel.resolve(target),
             Source::Model(asset) => sources::model_download(asset).map(|d| (String::new(), d)),
+            Source::Ffmpeg => sources::ffmpeg_download(target),
         };
         let (version, download) = match resolved {
             Ok(resolved) => resolved,
@@ -378,10 +409,18 @@ fn install_item(item: &mut Item, index: usize, reporter: &Reporter) -> Result<()
         Transfer::Verifying => reporter.send(Event::Stage { item: index, stage: Stage::Verifying }),
     };
     fetch::download(&download, &path, &reporter.cancel, &mut on_progress)?;
-    if let Destination::Libraries(dir) = &item.destination {
-        reporter.send(Event::Stage { item: index, stage: Stage::Extracting });
-        archive::extract_libraries(&path, dir, &reporter.cancel)?;
-        std::fs::remove_file(&path)?;
+    match &item.destination {
+        Destination::Libraries(dir) => {
+            reporter.send(Event::Stage { item: index, stage: Stage::Extracting });
+            archive::extract_libraries(&path, dir, &reporter.cancel)?;
+            std::fs::remove_file(&path)?;
+        }
+        Destination::Program(program) => {
+            reporter.send(Event::Stage { item: index, stage: Stage::Extracting });
+            archive::extract_program(&path, sources::FFMPEG_MEMBER_PREFIX, program)?;
+            std::fs::remove_file(&path)?;
+        }
+        Destination::File(_) => {}
     }
     item.installed = true;
     reporter.send(Event::Stage { item: index, stage: Stage::Done });
@@ -485,6 +524,7 @@ mod tests {
             force: true,
             models: assets::required(&Settings::default()).to_vec(),
             external_runtime: false,
+            ffmpeg: false,
         }
     }
 
@@ -506,6 +546,14 @@ mod tests {
         assert!(plan.items.iter().all(|i| matches!(i.kind, Kind::Runtime | Kind::Model)));
         let external = Request { external_runtime: true, ..request(true) };
         assert!(Plan::check(host(Flavour::Cuda13), &external).items.iter().all(|i| i.kind == Kind::Model));
+    }
+
+    #[test]
+    fn ffmpeg_only_installs_ffmpeg_when_the_machine_has_none() {
+        let plan = Plan::check(host(Flavour::Cuda13), &Request::ffmpeg_only());
+        let expected = usize::from(weshy_media::system_ffmpeg().is_none());
+        assert_eq!(plan.items.len(), expected);
+        assert!(plan.items.iter().all(|i| i.kind == Kind::Ffmpeg && matches!(i.destination, Destination::Program(_))));
     }
 
     #[test]

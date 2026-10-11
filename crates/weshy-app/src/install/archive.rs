@@ -92,6 +92,27 @@ fn extract_zip(archive: &Path, dest: &Path, cancel: &AtomicBool) -> Result<Vec<S
     Ok(installed)
 }
 
+/// Extract the one file of the zip `archive` (a wheel) whose path starts with `prefix` to
+/// `dest`, executable.
+pub fn extract_program(archive: &Path, prefix: &str, dest: &Path) -> Result<()> {
+    let mut zip = zip::ZipArchive::new(File::open(archive)?).with_context(|| format!("failed to open {}", archive.display()))?;
+    let index = (0..zip.len())
+        .find(|&i| zip.name_for_index(i).is_some_and(|name| name.starts_with(prefix)))
+        .with_context(|| format!("{} contains no {prefix}*", archive.display()))?;
+    let dir = dest.parent().context("program path without a directory")?;
+    std::fs::create_dir_all(dir)?;
+    let name = dest.file_name().context("program path without a file name")?.to_string_lossy();
+    write_file(&mut zip.by_index(index)?, dir, &name)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        /// rwxr-xr-x
+        const EXECUTABLE: u32 = 0o755;
+        std::fs::set_permissions(dest, std::fs::Permissions::from_mode(EXECUTABLE))?;
+    }
+    Ok(())
+}
+
 fn check(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::Relaxed) { Err(Cancelled.into()) } else { Ok(()) }
 }
@@ -176,6 +197,31 @@ mod tests {
         assert_eq!(extract_libraries(&wheel, &dest, &AtomicBool::new(false)).unwrap(), ["libcudart.so.13"]);
         assert_eq!(std::fs::read_to_string(dest.join("libcudart.so.13")).unwrap(), "elf");
         assert!(!dest.join("cuda.h").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn extracts_one_program_from_a_wheel() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("weshy-archive-program-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wheel = dir.join("imageio_ffmpeg.whl");
+        let mut zip = zip::ZipWriter::new(File::create(&wheel).unwrap());
+        for (name, body) in [("imageio_ffmpeg/binaries/README.md", "doc"), ("imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2", "elf")] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+
+        let dest = dir.join("ffmpeg").join("ffmpeg");
+        extract_program(&wheel, "imageio_ffmpeg/binaries/ffmpeg-", &dest).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "elf");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&dest).unwrap().permissions().mode() & 0o111, 0o111);
+        }
+        assert!(extract_program(&wheel, "imageio_ffmpeg/binaries/ffprobe-", &dest).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

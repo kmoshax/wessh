@@ -14,6 +14,7 @@ mod video;
 pub use camera::{Camera, CameraConfig, default_camera_device, is_network_source};
 pub use devices::{Devices, LOOPBACK_MODPROBE, LoopbackStatus, VideoDevice, list_devices};
 pub use error::{Error, Result};
+pub use ffmpeg::{bundled_ffmpeg, find_ffmpeg, system_ffmpeg};
 pub use latest::LatestFrame;
 pub use sink::{DEFAULT_LOOPBACK, DEFAULT_STREAM, FrameSink, OutputTarget};
 pub use video::{Encoder, VideoInfo, VideoReader, probe};

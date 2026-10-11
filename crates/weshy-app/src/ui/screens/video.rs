@@ -12,6 +12,7 @@ use crate::ui::file_picker::{Dialog, FilePicker, reveal, sibling_output};
 use crate::ui::icons;
 use crate::ui::task::Task;
 use crate::ui::theme::{self, TypeRole, shape, size, spacing};
+use crate::ui::tools::VideoTools;
 use eframe::egui::{Align, Context, Id, Label, Layout, Rect, Sense, TextureHandle, Ui, UiBuilder, Vec2, pos2, vec2};
 use std::path::{Path, PathBuf};
 use weshy_media::{Encoder, VideoInfo, VideoReader, probe};
@@ -56,6 +57,8 @@ pub struct VideoScreen {
     probe_error: Option<String>,
     /// Start rendering as soon as everything is ready (screenshot capture).
     autostart: bool,
+    /// The ffmpeg that decoding and encoding need, downloaded on first use.
+    tools: VideoTools,
 }
 
 impl VideoScreen {
@@ -88,6 +91,11 @@ impl VideoScreen {
     /// Draw the screen into `rect`; jobs go to `runner`.
     pub fn ui(&mut self, ui: &mut Ui, rect: Rect, frame: &mut Frame<'_>, runner: &JobRunner) {
         let ctx = ui.ctx().clone();
+        if !self.tools.is_ready() {
+            pane(ui, rect);
+            centered(ui, column(rect, EMPTY_WIDTH), "video-tools", |ui| self.tools.ui(ui, "Videos"));
+            return;
+        }
         self.poll(&ctx, frame);
         if self.autostart && self.ready(frame) {
             self.autostart = false;

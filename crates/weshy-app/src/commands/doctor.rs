@@ -42,7 +42,7 @@ pub fn run(options: &Options) -> Result<()> {
     row("best runtime", format!("{} ({})", recommended.flavour, recommended.reason));
 
     check_runtime(options, target, recommended.flavour.cuda_major(), &mut report);
-    check_ffmpeg(target, &mut report);
+    check_ffmpeg();
     check_models(options, &mut report);
     if target.os == Os::Linux {
         check_v4l2loopback(&mut report);
@@ -143,13 +143,9 @@ fn version_from_file_name(name: &str) -> Option<&str> {
     (version.contains('.') && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')).then_some(version)
 }
 
-fn check_ffmpeg(target: Target, report: &mut Report) {
-    if let Some(version) = platform::ffmpeg_version() {
-        row("ffmpeg", version);
-    } else {
-        row("ffmpeg", "not found");
-        report.problems.push(format!("ffmpeg is needed for camera and video modes: {}", platform::ffmpeg_install_hint(target.os)));
-    }
+/// Only video files and network cameras need ffmpeg, and the app downloads it when they do.
+fn check_ffmpeg() {
+    row("ffmpeg", platform::ffmpeg_version().unwrap_or_else(|| "not installed (downloaded when a video is first opened)".to_owned()));
 }
 
 fn check_models(options: &Options, report: &mut Report) {

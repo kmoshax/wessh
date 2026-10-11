@@ -259,42 +259,11 @@ pub fn choose_flavour(target: Target, gpus: &[Gpu]) -> Choice {
     }
 }
 
-/// First line of `ffmpeg -version`, or `None` when ffmpeg can't be run.
+/// First line of `ffmpeg -version` for the ffmpeg weshy would run, or `None` when there is none.
 #[must_use]
 pub fn ffmpeg_version() -> Option<String> {
-    let program = std::env::var("WESHY_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_owned());
-    run_stdout(&program, &["-hide_banner", "-version"]).and_then(|out| out.lines().next().map(str::to_owned))
-}
-
-/// Shell command that installs ffmpeg on this machine.
-#[must_use]
-pub fn ffmpeg_install_hint(os: Os) -> &'static str {
-    match os {
-        Os::Windows => "winget install Gyan.FFmpeg",
-        Os::Mac => "brew install ffmpeg",
-        Os::Linux => linux_install_hint(&std::fs::read_to_string("/etc/os-release").unwrap_or_default()),
-    }
-}
-
-/// Package-manager command for a distribution, from the `ID` / `ID_LIKE` lines of os-release.
-fn linux_install_hint(os_release: &str) -> &'static str {
-    let ids: Vec<&str> = os_release
-        .lines()
-        .filter_map(|l| l.strip_prefix("ID=").or_else(|| l.strip_prefix("ID_LIKE=")))
-        .flat_map(|v| v.trim_matches('"').split_whitespace())
-        .collect();
-    let is = |name: &str| ids.contains(&name);
-    if is("arch") {
-        "sudo pacman -S ffmpeg"
-    } else if is("debian") || is("ubuntu") {
-        "sudo apt install ffmpeg"
-    } else if is("fedora") || is("rhel") {
-        "sudo dnf install ffmpeg   (from RPM Fusion)"
-    } else if is("suse") || is("opensuse") {
-        "sudo zypper install ffmpeg"
-    } else {
-        "install ffmpeg with your package manager"
-    }
+    let program = weshy_media::find_ffmpeg()?;
+    run_stdout(&program.to_string_lossy(), &["-hide_banner", "-version"]).and_then(|out| out.lines().next().map(str::to_owned))
 }
 
 /// Stdout of a successful command, `None` if it is missing or fails.
@@ -363,12 +332,5 @@ mod tests {
         assert_eq!(Vendor::from_pci_id("0x1002"), Vendor::Amd);
         assert_eq!(Vendor::from_name("AMD Radeon RX 7800 XT"), Vendor::Amd);
         assert_eq!(Vendor::from_name("Intel(R) UHD Graphics"), Vendor::Intel);
-    }
-
-    #[test]
-    fn distro_hints() {
-        assert_eq!(linux_install_hint("ID=cachyos\nID_LIKE=arch\n"), "sudo pacman -S ffmpeg");
-        assert_eq!(linux_install_hint("ID=pop\nID_LIKE=\"ubuntu debian\"\n"), "sudo apt install ffmpeg");
-        assert!(linux_install_hint("ID=nixos\n").contains("package manager"));
     }
 }

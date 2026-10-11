@@ -86,6 +86,9 @@ impl Camera {
     }
 
     fn start_ffmpeg(config: &CameraConfig, output: Arc<LatestFrame>) -> Result<Self> {
+        if crate::find_ffmpeg().is_none() {
+            return Err(crate::Error::Unsupported("phone cameras need weshy's video tools; open the Video screen once to download them"));
+        }
         let mut cmd = ffmpeg();
         cmd.args(input_args(config, std::env::consts::OS)).args(output_args(config)).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut process = spawn(&mut cmd)?;

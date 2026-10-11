@@ -21,6 +21,7 @@ pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
         force: args.force,
         models: if args.no_models { Vec::new() } else { assets::required(&options.settings()).to_vec() },
         external_runtime: false,
+        ffmpeg: true,
     };
 
     println!("data dir   {}", data_dir().display());
@@ -33,19 +34,14 @@ pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
     println!("runtime    {} ({})", host.choice.flavour, host.choice.reason);
     println!("\nchecking what is needed...");
 
-    let target = host.target;
     let plan = run_job(Plan::check(host, &request), Job::Resolve)?;
     print_plan(&plan);
     let plan = if args.dry_run || plan.is_complete() { plan } else { run_job(plan, Job::Install)? };
     debug_assert!(args.dry_run || plan.is_complete());
 
     println!();
-    match platform::ffmpeg_version() {
-        Some(version) => println!("ffmpeg     {version}"),
-        None => println!(
-            "ffmpeg     not found; video and camera modes need it. Install it with:\n           {}",
-            platform::ffmpeg_install_hint(target.os)
-        ),
+    if let Some(version) = platform::ffmpeg_version() {
+        println!("ffmpeg     {version}");
     }
     if args.dry_run {
         println!("\ndry run: nothing was downloaded or changed");

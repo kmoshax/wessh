@@ -1,5 +1,6 @@
 //! Where each component comes from: ONNX Runtime GitHub releases, NVIDIA's CUDA wheels on
-//! PyPI (TensorRT on NVIDIA's own index), and the models on Hugging Face.
+//! PyPI (TensorRT on NVIDIA's own index), the models on Hugging Face, and a static ffmpeg from
+//! the `imageio-ffmpeg` wheels on PyPI.
 
 use super::fetch::{self, Download};
 use super::platform::{Arch, Flavour, Os, Target};
@@ -248,7 +249,8 @@ fn wheel_supports(filename: &str, target: Target) -> bool {
         (Os::Linux, Arch::Aarch64) => tag.starts_with("manylinux") && tag.ends_with("_aarch64"),
         (Os::Windows, Arch::X86_64) => tag == "win_amd64",
         (Os::Windows, Arch::Aarch64) => tag == "win_arm64",
-        (Os::Mac, _) => false,
+        (Os::Mac, Arch::Aarch64) => tag.starts_with("macosx") && tag.ends_with("_arm64"),
+        (Os::Mac, Arch::X86_64) => tag.starts_with("macosx") && (tag.ends_with("_x86_64") || tag.ends_with("_intel")),
     })
 }
 
@@ -265,6 +267,21 @@ fn pick(candidates: Vec<Candidate>, versions: &str, target: Target) -> Option<Ca
         .filter_map(|c| Some((release_key(&c.version)?, c)))
         .max_by(|(a, _), (b, _)| a.cmp(b))
         .map(|(_, c)| c)
+}
+
+/// PyPI package whose wheels carry one static ffmpeg build per platform (21–31 MB).
+pub const FFMPEG_PACKAGE: &str = "imageio-ffmpeg";
+/// Only these releases are known to keep their binary under [`FFMPEG_MEMBER_PREFIX`].
+const FFMPEG_VERSIONS: &str = "0.";
+/// Archive path prefix of the ffmpeg executable inside those wheels
+/// (`imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2`).
+pub const FFMPEG_MEMBER_PREFIX: &str = "imageio_ffmpeg/binaries/ffmpeg-";
+
+/// The newest `imageio-ffmpeg` wheel for `target`.
+pub fn ffmpeg_download(target: Target) -> Result<(String, Download)> {
+    let best = pick(pypi_candidates(FFMPEG_PACKAGE)?, FFMPEG_VERSIONS, target)
+        .with_context(|| format!("no ffmpeg build for {:?} {:?}", target.os, target.arch))?;
+    Ok((best.version, Download { url: best.url, file_name: best.filename, size: best.size, sha256: best.sha256 }))
 }
 
 /// A model with its size and SHA-256 (Hugging Face publishes both for LFS files).
@@ -305,6 +322,12 @@ mod tests {
         assert!(!wheel_supports(linux, Target { os: Os::Linux, arch: Arch::Aarch64 }));
         assert!(wheel_supports("nvidia_cufft-12.4.0.43-py3-none-win_amd64.whl", WINDOWS_X64));
         assert!(!wheel_supports("tensorrt_cu13_libs-11.3.0.99.tar.gz", LINUX_X64));
+        let mac_arm = Target { os: Os::Mac, arch: Arch::Aarch64 };
+        let mac_intel = Target { os: Os::Mac, arch: Arch::X86_64 };
+        assert!(wheel_supports("imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", mac_arm));
+        assert!(!wheel_supports("imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", mac_intel));
+        assert!(wheel_supports("imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl", mac_intel));
+        assert!(!wheel_supports("imageio_ffmpeg-0.6.0-py3-none-win32.whl", WINDOWS_X64));
     }
 
     #[test]

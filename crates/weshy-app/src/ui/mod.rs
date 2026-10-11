@@ -13,6 +13,7 @@ mod icons;
 mod screens;
 mod task;
 mod theme;
+mod tools;
 
 use crate::cli::Options;
 use crate::jobs::JobRunner;

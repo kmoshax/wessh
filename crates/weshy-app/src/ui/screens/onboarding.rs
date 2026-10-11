@@ -113,8 +113,6 @@ pub struct Onboarding {
     first_run: bool,
     gpu: Option<String>,
     flavour: platform::Flavour,
-    /// How to install ffmpeg when it is missing (checked on the done page).
-    ffmpeg_hint: Option<&'static str>,
     /// Design review: pause the download at this time (`WESHY_UI_PAUSE_AT`).
     pause_at: Option<f64>,
 }
@@ -130,6 +128,7 @@ fn request(options: &Options) -> Request {
         force: false,
         models: assets::required(&options.settings()).to_vec(),
         external_runtime,
+        ffmpeg: false,
     }
 }
 
@@ -179,13 +178,12 @@ impl Onboarding {
             paused: false,
             failure: None,
             rate: None,
-            ffmpeg_hint: None,
             pause_at: std::env::var("WESHY_UI_PAUSE_AT").ok().and_then(|s| s.parse().ok()),
         };
         match onboarding.step {
             Step::Welcome => onboarding.start(ctx, Job::Resolve),
             Step::Download => onboarding.start(ctx, Job::Install),
-            Step::Done => onboarding.check_ffmpeg(),
+            Step::Done => {}
         }
         onboarding
     }
@@ -213,12 +211,6 @@ impl Onboarding {
             self.start_after_resolve = true;
         } else {
             self.start(ctx, Job::Install);
-        }
-    }
-
-    fn check_ffmpeg(&mut self) {
-        if platform::ffmpeg_version().is_none() {
-            self.ffmpeg_hint = platform::Target::host().ok().map(|t| platform::ffmpeg_install_hint(t.os));
         }
     }
 
@@ -266,7 +258,6 @@ impl Onboarding {
             }
             (Job::Install, Outcome::Done) if complete => {
                 self.step = Step::Done;
-                self.check_ffmpeg();
             }
             (_, Outcome::Cancelled) => self.paused = true,
             (Job::Install, Outcome::Failed(error)) => self.failure = Some(error),
@@ -326,7 +317,7 @@ impl Onboarding {
                     });
                 }
                 Step::Done => centered(ui, column(body, NARROW_WIDTH), "onboarding-done", |ui| {
-                    if self.done(ui, &colors) {
+                    if Self::done(ui, &colors) {
                         next = Next::OpenApp;
                     }
                 }),
@@ -525,23 +516,13 @@ impl Onboarding {
     // ── Done ─────────────────────────────────────────────────────────────────────
 
     /// Returns `true` when the user moves on to the app.
-    fn done(&mut self, ui: &mut Ui, colors: &ColorScheme) -> bool {
+    fn done(ui: &mut Ui, colors: &ColorScheme) -> bool {
         hero(ui, icons::TASK_ALT, colors.primary_container, colors.on_primary_container);
         ui.add_space(spacing::LG);
         ui.label(TypeRole::HeadlineMedium.rich("You're all set", colors.on_surface));
         ui.add_space(spacing::SM);
         let body = "weshy is ready. Pick a photo of a face, then start your camera.";
         wrapped(ui, TypeRole::BodyLarge, body, colors.on_surface_variant, Align::Center);
-        if let Some(hint) = self.ffmpeg_hint {
-            ui.add_space(spacing::XL);
-            let text = format!("The camera and video modes also need ffmpeg. Install it with:\n{hint}");
-            let frame =
-                Frame::new().fill(colors.surface_container_high).corner_radius(shape::MEDIUM).inner_margin(Margin::same(spacing::LG as i8));
-            frame.show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                note(ui, icons::INFO, &text, colors.on_surface_variant, colors);
-            });
-        }
         ui.add_space(spacing::XL);
         let open = ui.add(Button::filled("Start using weshy").icon(icons::ARROW_FORWARD)).clicked();
         open || ui.input(|i| i.key_pressed(Key::Enter))
