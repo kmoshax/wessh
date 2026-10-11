@@ -126,6 +126,7 @@ jobs:
         env:
           TEST_IMAGE: ${{ matrix.image }}
         run: |
+          chmod +x dist/*.AppImage
           docker run --rm -v "$PWD:/work:ro" "$TEST_IMAGE" sh -ec '
             if command -v apt-get >/dev/null; then
               apt-get update && apt-get install -y xvfb xauth libgl1-mesa-dri libgl1
