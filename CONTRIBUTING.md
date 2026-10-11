@@ -48,7 +48,16 @@ cargo test --workspace --locked
 - Dependencies must earn their place: the release binary is a few megabytes and should stay that way.
   Prefer the standard library, then small well-maintained crates.
 
-See [CLAUDE.md](CLAUDE.md) for the architecture and crate boundaries.
+## Architecture
+
+| Crate         | Role                                                                          |
+| ------------- | ----------------------------------------------------------------------------- |
+| `weshy-core`  | the face pipeline on ONNX Runtime; no I/O besides model files                 |
+| `weshy-media` | ffmpeg subprocesses: webcam capture, virtual camera / stream output, video    |
+| `weshy-app`   | the `weshy` binary: CLI, headless commands, installer and the egui app        |
+
+Dependencies point one way: `weshy-app` → `weshy-media` → `weshy-core`. The core knows nothing
+about ffmpeg, the CLI or the UI, and the media crate never runs inference.
 
 ## Benchmarks
 

@@ -2,3 +2,5 @@
 *.onnx
 /dist
 .claude/
+
+CLAUDE.md
