@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 repository = "https://github.com/kmoshax/weshy"
 
 [workspace.dependencies]

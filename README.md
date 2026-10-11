@@ -189,3 +189,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 - XSeg occlusion and BiSeNet region masks, mouth mask
 - CoreML execution provider on Apple Silicon
 - Native virtual camera on Windows 11 (`MFCreateVirtualCamera`) and macOS (Camera Extension)
+
+## License
+
+Copyright (C) 2026 kmoshax.
+
+weshy is free software, licensed under the [GNU Affero General Public License v3.0 only](LICENSE).
+You may use, study, modify and share it, but anything you distribute or offer to others over a
+network that is built on weshy must be released, in full source, under the same license.

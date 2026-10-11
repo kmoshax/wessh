@@ -22,7 +22,7 @@ name="weshy-$version-$target"
 stage="dist/$name"
 rm -rf "$stage"
 mkdir -p "$stage"
-cp "$binary" README.md LICENSE-MIT LICENSE-APACHE "$stage/"
+cp "$binary" README.md LICENSE "$stage/"
 
 cd dist
 if [[ "$target" == *windows* ]]; then
