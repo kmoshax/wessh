@@ -96,7 +96,12 @@ jobs:
           echo "APPIMAGETOOL=$tools/appimagetool" >> "$GITHUB_ENV"
       - name: package
         shell: bash
-        run: scripts/package.sh "${{ matrix.target }}" "${GITHUB_REF_NAME}"
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            scripts/package.sh "${{ matrix.target }}" "$GITHUB_REF_NAME"
+          else
+            scripts/package.sh "${{ matrix.target }}"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: wessh-${{ matrix.target }}
