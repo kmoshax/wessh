@@ -4,6 +4,7 @@
 //! - `WESSH_UI_CAPTURE=<file.png>`: once the engine has loaded, save one frame and quit.
 //! - `WESSH_UI_CAPTURE_AT=<seconds>`: capture at a fixed time instead (e.g. to show loading).
 //! - `WESSH_UI_THEME=light|dark`: start in the given brightness.
+//! - `WESSH_UI_UPDATER=preview`: display the update dialog with sample data; all update actions are disabled.
 //! - `WESSH_UI_SCREEN=live|image|video`: start on the given destination.
 //! - `WESSH_UI_SOURCE=<image>`: preload a source face.
 //! - `WESSH_UI_TARGET=<file>`: preload the photo (Image screen) or video (Video screen) to swap.

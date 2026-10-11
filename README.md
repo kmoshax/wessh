@@ -43,6 +43,10 @@ Download from [Releases](https://github.com/kmoshax/wessh/releases), then open:
 
 First launch installs your runtime and models for enabled features. Optional masks download when you enable them; TensorRT is opt-in. Downloads happen once and can resume.
 
+## Updates
+
+Use the update button in the app bar to check stable releases, download an update, then install and restart. The updater preserves your installation format, models and runtime cache; it waits for processing jobs to finish before restarting.
+
 ## Features
 
 - Live webcam preview, plus image and video face swapping.

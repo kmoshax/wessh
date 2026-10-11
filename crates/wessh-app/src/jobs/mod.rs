@@ -107,6 +107,14 @@ pub struct JobRunner {
 }
 
 impl JobRunner {
+    /// Updating must not interrupt queued or running image/video processing.
+    pub fn is_busy(&self) -> bool {
+        self.submitted
+            .lock()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .any(|job| matches!(*job.status.lock(), Status::Queued | Status::Loading | Status::Running(_)))
+    }
     /// Spawn the (idle) worker. `repaint` is called whenever a job has news.
     pub fn spawn(engine: EngineOptions, repaint: impl Fn() + Send + 'static) -> Self {
         let (queue, inbox) = crossbeam_channel::unbounded();

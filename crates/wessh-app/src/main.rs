@@ -10,6 +10,7 @@ mod install;
 mod jobs;
 mod live;
 mod ui;
+mod update;
 
 use clap::Parser;
 

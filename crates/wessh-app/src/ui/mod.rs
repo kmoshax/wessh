@@ -15,6 +15,7 @@ mod screens;
 mod task;
 mod theme;
 mod tools;
+mod updater;
 
 use crate::cli::Options;
 use crate::jobs::JobRunner;
@@ -60,6 +61,7 @@ struct Shell {
     theme: ThemeConfig,
     /// Design review capture, while onboarding shows (the app takes it over afterwards).
     capture: Option<capture::Capture>,
+    updater: updater::Updater,
 }
 
 impl Shell {
@@ -70,7 +72,7 @@ impl Shell {
         theme::install_fonts(ctx);
         theme::apply(ctx, theme);
         let onboarding = Onboarding::check(ctx, &options, dev.onboarding).map(Box::new);
-        let mut shell = Self { options, onboarding, app: None, theme, capture: None };
+        let mut shell = Self { options, onboarding, app: None, theme, capture: None, updater: updater::Updater::new(ctx) };
         if shell.onboarding.is_some() {
             shell.capture = dev.capture;
         } else {
@@ -100,10 +102,15 @@ impl eframe::App for Shell {
             } else if let Some(capture) = &mut self.capture {
                 capture.update(ctx, &Phase::Ready);
             }
-            return;
+            egui::Area::new(egui::Id::new("onboarding-updates"))
+                .anchor(egui::Align2::RIGHT_TOP, [-24.0, 24.0])
+                .show(ctx, |ui| self.updater.button(ui));
+        } else if let Some(app) = &mut self.app {
+            app.update(ui, frame, &mut self.updater);
         }
-        if let Some(app) = &mut self.app {
-            app.update(ui, frame);
+        let busy = self.app.as_ref().is_some_and(|app| app.jobs.is_busy());
+        if self.updater.ui(ctx, busy) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 }
@@ -192,7 +199,7 @@ impl App {
         }
     }
 
-    fn app_bar(&mut self, root_ui: &mut egui::Ui, snapshot: &Snapshot, expanded: bool) {
+    fn app_bar(&mut self, root_ui: &mut egui::Ui, snapshot: &Snapshot, expanded: bool, updater: &mut updater::Updater) {
         let ctx = &root_ui.ctx().clone();
         let colors = theme::colors(ctx);
         let frame = egui::Frame::new().fill(colors.surface);
@@ -201,6 +208,7 @@ impl App {
             let mut toggle_sheet = false;
             top_app_bar(ui, APP_NAME, |ui| {
                 ui.spacing_mut().item_spacing.x = spacing::SM;
+                updater.button(ui);
                 let (icon, tip) = if colors.is_dark() { (icons::LIGHT_MODE, "Light theme") } else { (icons::DARK_MODE, "Dark theme") };
                 toggle_theme = ui.add(IconButton::new(icon, tip)).clicked();
                 if !expanded {
@@ -240,7 +248,7 @@ fn backend_chip(ui: &mut egui::Ui, snapshot: &Snapshot) {
 }
 
 impl App {
-    fn update(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn update(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame, updater: &mut updater::Updater) {
         let ctx = &root_ui.ctx().clone();
         let snapshot = self.session.snapshot();
         self.handle_drops(ctx, &snapshot);
@@ -248,7 +256,7 @@ impl App {
         self.handle_shortcuts(ctx, &snapshot);
 
         let expanded = ctx.content_rect().width() - RAIL_WIDTH >= EXPANDED_BREAKPOINT;
-        self.app_bar(root_ui, &snapshot, expanded);
+        self.app_bar(root_ui, &snapshot, expanded, updater);
         self.rail(root_ui);
         let colors = theme::colors(ctx);
         let margin = Margin { left: 0, right: spacing::XL as i8, top: 0, bottom: spacing::XL as i8 };
