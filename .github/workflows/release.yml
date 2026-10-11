@@ -3,12 +3,14 @@ name: Release
 # Portable archives: the binary plus README and licenses. ONNX Runtime, CUDA and the models are
 # not bundled; `wessh setup` fetches the right ones for each machine, which keeps downloads tiny.
 #
+# Pushes to main build downloadable artifacts; version tags also publish a GitHub release.
 # To release: bump `version` in Cargo.toml, commit, then tag and push it:
 #   git tag v0.3.0 && git push origin v0.3.0
 # A tag with a suffix (v0.3.0-rc.1) becomes a pre-release, which the installers skip.
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
