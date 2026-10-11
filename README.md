@@ -5,7 +5,17 @@
 
 **wessh** (وشي, “my face”) is an educational, native Rust app for real-time face swapping. No Python environment needed.
 
-![MrBeast face-swap demo — twelve edited clips](docs/assets/demo.gif)
+<table>
+  <tr>
+    <td width="70%" align="center">
+      <img src="docs/assets/demo.gif" width="480" alt="MrBeast face-swap demo — twelve edited clips">
+    </td>
+    <td width="30%" align="center">
+      <img src="docs/assets/mrbeast.png" width="203" alt="MrBeast source portrait used for the demo">
+      <br><sub>Source face · MrBeast</sub>
+    </td>
+  </tr>
+</table>
 
 _12 clips · Edited footage · [Sources & credits](docs/demo-sources.md)_
 
