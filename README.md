@@ -3,7 +3,7 @@
 [![CI](https://github.com/kmoshax/wessh/actions/workflows/ci.yml/badge.svg)](https://github.com/kmoshax/wessh/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/kmoshax/wessh)](https://github.com/kmoshax/wessh/releases/latest)
 
-**wessh** (وشي, “my face”) is an educational, native Rust app for real-time face swapping. No Python environment needed.
+**wessh** (وش, “face”) is an educational, native Rust app for real-time face swapping. No Python environment needed.
 
 > [!CAUTION]
 > **Educational and experimental project.** Provided as is, without warranties. Use media with permission and the consent of the people depicted. Do not use it for deception, harassment or non-consensual content. You are responsible for your use and outputs; third-party models have their own terms.
