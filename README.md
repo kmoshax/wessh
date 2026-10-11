@@ -1,60 +1,38 @@
-# wessh
+![wessh — real-time face swap, built in Rust](docs/assets/banner.svg)
 
 [![CI](https://github.com/kmoshax/wessh/actions/workflows/ci.yml/badge.svg)](https://github.com/kmoshax/wessh/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/kmoshax/wessh)](https://github.com/kmoshax/wessh/releases/latest)
 
-*wessh* (وشي) is Arabic for "my face". Real-time face swap in Rust. A lighter, faster take on Deep-Live-Cam: one native binary,
-no Python, no PyTorch and no multi-gigabyte environment to build.
+**wessh** (وشي, “my face”) is an educational, native Rust app for real-time face swapping. No Python environment needed.
 
 ## Quick start
 
-Download the file for your platform from [Releases](https://github.com/kmoshax/wessh/releases):
+Download from [Releases](https://github.com/kmoshax/wessh/releases), then open:
 
-- **Linux:** `wessh-linux-x86_64.AppImage` (or `aarch64` for ARM). Make it executable in your file manager and open it. No distribution-specific package or administrator access is needed.
-- **Windows:** `wessh-windows-x64-setup.exe`. Install, then open wessh from the Start menu.
-- **macOS:** open the DMG and drag wessh into Applications. The bundle currently uses an ad-hoc signature, not Apple notarization.
+- **Linux:** AppImage — make it executable and launch it.
+- **Windows:** setup EXE — install and open from the Start menu.
+- **macOS:** DMG — drag wessh into Applications.
 
-The first-run screen detects your hardware and downloads the runtime and models once, with pause and resume. Video tools download inside the app when needed.
-
-Linux AppImages include the X11/Wayland window libraries, curl and HTTPS certificates. They target glibc 2.35 or newer and use the host's graphics drivers. The release workflow tests graphical startup on Debian, Fedora and Arch. Alpine/musl is not supported. If FUSE is unavailable, run `./wessh-linux-x86_64.AppImage --appimage-extract-and-run`. A virtual webcam on Linux still requires the host's v4l2loopback kernel module; image processing and the app preview do not.
-
-Portable archives and the command-line installers in `scripts/` remain available for terminal users. `wessh doctor` diagnoses runtime and model installation.
+First launch sets up your runtime and models. Downloads happen once and can resume.
 
 ## Features
 
-- Live webcam swap with an egui preview, per-stage timings, and virtual camera output
-  (`/dev/videoN` via v4l2loopback on Linux, or `udp://` for OBS on any OS)
-- Image and video modes; video keeps the audio and encodes with NVENC / VideoToolbox when available
-- Swap models: inswapper 128 (fp16, the default), HyperSwap 1a / 1b / 1c 256
-- GFPGAN 1.4 face restoration, applied only as far as the original face's detail goes
-- One Euro landmark stabilisation, so the live swap doesn't jitter
-- Execution providers picked automatically: TensorRT (fp16, engine + timing cache) → CUDA → CPU
-- Self-contained installation: everything lives in one data directory, nothing is installed system-wide
+- Live webcam preview, plus image and video face swapping.
+- Face restoration and stable tracking.
+- Automatic GPU acceleration with a CPU fallback.
+- Local processing, with runtime and models kept in one data directory.
 
-## Why it's fast
+<details>
+<summary>Performance notes</summary>
 
-- Pre/post-processing only touches the aligned crop and the face's bounding box, never whole-frame
-  copies. Kernels are parallelised with rayon.
-- Capture, inference and output run on separate threads. The worker always takes the *newest*
-  frame and drops stale ones, so latency never builds up.
-- Video decode, swap and encode are pipelined through bounded channels.
-- ONNX Runtime is loaded dynamically: the binary stays small, and CUDA / TensorRT are a drop-in.
-- Source embeddings, feather masks and inswapper's embedding map are computed once and cached.
+- Face crops are processed in parallel without copying whole frames.
+- Capture, inference and output run on separate threads; stale frames are dropped.
+- Video decoding and encoding are pipelined, with NVENC / VideoToolbox when available.
+- ONNX Runtime loads dynamically; embeddings, masks and TensorRT engines are cached.
 
-## wessh vs Deep-Live-Cam
+Measure your hardware with `wessh bench`; see [benchmark instructions](CONTRIBUTING.md#benchmarks).
 
-|                           | wessh                                        | Deep-Live-Cam                                                     |
-| ------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
-| Install steps             | download, `wessh setup`, run                 | Python 3.10 + git + ffmpeg + (Windows) VS build tools, clone, venv, `pip install`, download models by hand, CUDA toolkit + cuDNN for GPU |
-| Application download      | ≈ 3.5 MB archive (7 MB binary, Linux x86-64) | TODO (clone + `pip install`)                                      |
-| Runtime + models, CPU     | ≈ 460 MB (ONNX Runtime 24 MB + models)      | TODO GB                                                           |
-| Runtime + models, NVIDIA  | ≈ 1.9 GB download, ≈ 2.8 GB on disk         | TODO GB                                                           |
-| Live latency, CPU         | TODO ms / frame                             | TODO ms / frame                                                   |
-| Live latency, NVIDIA GPU  | TODO ms / frame                             | TODO ms / frame                                                   |
-| System-wide changes       | none (one data directory)                   | Python packages, CUDA toolkit                                     |
-
-Latency is measured with `wessh bench` (per-stage timings) on the same machine and source/target
-images; see [CONTRIBUTING.md](CONTRIBUTING.md#benchmarks).
+</details>
 
 ## Commands
 
@@ -145,6 +123,16 @@ wessh cam -s me.jpg --out /dev/video10
 
 ## Platform notes
 
+<details>
+<summary>Installation details</summary>
+
+- **Linux:** AppImages bundle X11/Wayland libraries, curl and HTTPS certificates. They require glibc 2.35+ and your graphics driver; graphical startup is tested on Debian, Fedora and Arch. Alpine/musl is unsupported. Without FUSE, run `./wessh-linux-x86_64.AppImage --appimage-extract-and-run`.
+- **macOS:** the app is ad-hoc signed, not Apple-notarized.
+- Portable archives and CLI installers are available in `scripts/`. Run `wessh doctor` to check your installation.
+- Linux virtual webcam output requires the host's v4l2loopback kernel module. App preview and image processing do not.
+
+</details>
+
 - **Intel Macs**: Microsoft no longer publishes ONNX Runtime for macOS x86-64. Install it with
   `brew install onnxruntime` and pass `--ort "$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"`.
 - **Windows without NVIDIA**: runs on the CPU. DirectML builds of ONNX Runtime stop at 1.24,
@@ -168,6 +156,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 - XSeg occlusion and BiSeNet region masks, mouth mask
 - CoreML execution provider on Apple Silicon
 - Native virtual camera on Windows 11 (`MFCreateVirtualCamera`) and macOS (Camera Extension)
+
+## Educational use & disclaimer
+
+wessh is an educational and experimental project, provided **as is**, without warranties. Use only media you own or have permission to use, with the consent of the people depicted. Do not use it for impersonation, deception, harassment or non-consensual content. You are responsible for your use and outputs; third-party models have their own licenses and usage terms.
 
 ## License
 

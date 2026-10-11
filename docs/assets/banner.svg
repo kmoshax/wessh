@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">wessh</title>
+  <desc id="desc">Real-time face swap, built in Rust. A lavender banner with the wessh happy-face icon.</desc>
+  <rect width="1280" height="360" rx="32" fill="#F3EDF7"/>
+  <circle cx="1158" cy="48" r="236" fill="#EADDFF"/>
+  <circle cx="1120" cy="330" r="164" fill="#E8DEF8"/>
+  <g font-family="Roboto, Arial, sans-serif">
+    <text x="80" y="180" font-size="104" font-weight="700" letter-spacing="-5" fill="#21005D">wessh</text>
+    <text x="84" y="233" font-size="27" fill="#49454F">Real-time face swap. Built in Rust.</text>
+    <rect x="84" y="272" width="8" height="8" rx="4" fill="#6750A4"/>
+    <text x="104" y="284" font-size="18" letter-spacing="1" fill="#6750A4">WEBCAM / IMAGES / VIDEO</text>
+  </g>
+  <rect x="956" y="76" width="192" height="208" rx="48" transform="rotate(12 1052 180)" fill="#D0BCFF"/>
+  <rect x="916" y="76" width="208" height="208" rx="48" fill="#6750A4"/>
+  <path transform="translate(948 108) scale(9)" fill="#FFFFFF" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1m-2 9c-.552 0-1.016.46-.835.981a3 3 0 0 0 .714 1.14l.22.2a3 3 0 0 0 1.604.664L8 13a3 3 0 0 0 2.775-1.86l.06-.159c.18-.521-.283-.981-.835-.981zm-.72-3.78a.75.75 0 0 0-1.004-.052l-.056.052l-1 1a.75.75 0 1 0 1.06 1.06l.47-.47l.47.47a.75.75 0 1 0 1.06-1.06zm6.5 0a.75.75 0 0 0-1.004-.052l-.056.052l-1 1a.75.75 0 1 0 1.06 1.06l.47-.47l.47.47a.75.75 0 1 0 1.06-1.06z"/>
+</svg>
