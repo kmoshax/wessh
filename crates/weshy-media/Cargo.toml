@@ -3,6 +3,7 @@ name = "weshy-media"
 description = "ffmpeg-backed capture, virtual camera and video file I/O"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -1,5 +1,8 @@
 # weshy
 
+[![CI](https://github.com/kmoshax/weshy/actions/workflows/ci.yml/badge.svg)](https://github.com/kmoshax/weshy/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/kmoshax/weshy)](https://github.com/kmoshax/weshy/releases/latest)
+
 *weshy* (وشّي) is Egyptian Arabic for "my face". Real-time face swap in Rust. A lighter, faster take on Deep-Live-Cam: one native binary,
 no Python, no PyTorch and no multi-gigabyte environment to build.
 

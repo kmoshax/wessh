@@ -5,7 +5,8 @@ changes are judged on two things above all: latency and install friction.
 
 ## Getting started
 
-You need a recent stable Rust (edition 2024), `curl`, and `ffmpeg` on `PATH`.
+You need Rust 1.99 (pinned in `rust-toolchain.toml`, which rustup picks up), `curl`, and `ffmpeg`
+on `PATH`.
 
 ```sh
 git clone https://github.com/kmoshax/weshy && cd weshy
@@ -74,3 +75,13 @@ them with a `SHA256SUMS` file to a draft GitHub release, and leaves it for revie
 
 `sources::ORT_VERSION` in `crates/weshy-app/src/commands/setup/sources.rs` pins the ONNX Runtime
 release `weshy setup` installs; update it together with the `ort` crate.
+
+## Releasing
+
+1. Bump `version` in the workspace `Cargo.toml` (and run `cargo build` so `Cargo.lock` follows).
+2. Commit, then tag and push: `git tag v0.3.0 && git push origin main v0.3.0`.
+3. The Release workflow checks that the tag matches the version, runs the lints and tests,
+   builds Linux (x86-64, arm64), Windows and macOS (arm64, x86-64) archives and publishes them
+   with `SHA256SUMS`. The one-line installers pick up the new release immediately.
+
+A tag with a suffix (`v0.3.0-rc.1`) is published as a pre-release, which the installers skip.

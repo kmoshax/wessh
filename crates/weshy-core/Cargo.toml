@@ -3,6 +3,7 @@ name = "weshy-core"
 description = "Face detection, recognition, swapping and enhancement pipeline"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

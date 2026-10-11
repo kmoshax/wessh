@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # `ort` is pinned exactly (it must match the ONNX Runtime `setup` installs) and is left alone.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    ignore:
+      - dependency-name: ort
+    groups:
+      crates:
+        update-types: [minor, patch]

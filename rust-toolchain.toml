@@ -1,0 +1,6 @@
+# One toolchain for local builds and CI, so a new clippy release can't fail CI on unchanged code.
+# Bump deliberately (and fix the new lints in the same commit).
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

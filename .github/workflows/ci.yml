@@ -10,9 +10,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+
+# The toolchain comes from rust-toolchain.toml; rustup on the runners installs it on first use.
 
 jobs:
   fmt:
@@ -20,9 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - run: rustup toolchain install
       - run: cargo fmt --all --check
 
   check:
@@ -34,9 +37,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
