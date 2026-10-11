@@ -104,6 +104,7 @@ case "$target" in
         --custom-apprun scripts/linux/AppRun "${libraries[@]}"
     mkdir -p "$appdir/usr/share/wessh"
     cp /etc/ssl/certs/ca-certificates.crt "$appdir/usr/share/wessh/ca-certificates.crt"
+    cp /usr/share/X11/locale/en_US.UTF-8/Compose "$appdir/usr/share/wessh/Compose"
     # glibc and graphics drivers belong to the host; never ship a vendor GPU driver.
     APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" "$APPIMAGETOOL" --no-appstream "$appdir" "dist/wessh-linux-$arch.AppImage"
     rm -rf "$appdir"

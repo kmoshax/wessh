@@ -4,4 +4,8 @@ app_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$app_dir/usr/bin:$PATH"
 export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$app_dir/usr/share/wessh/ca-certificates.crt}"
+# Match Compose data to the bundled xkbcommon, preserving user overrides.
+if [ -z "${XCOMPOSEFILE:-}" ] && [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/XCompose" ] && [ ! -f "$HOME/.XCompose" ]; then
+    export XCOMPOSEFILE="$app_dir/usr/share/wessh/Compose"
+fi
 exec "$app_dir/usr/bin/wessh" "$@"
