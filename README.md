@@ -16,7 +16,7 @@ Download the file for your platform from [Releases](https://github.com/kmoshax/w
 
 The first-run screen detects your hardware and downloads the runtime and models once, with pause and resume. Video tools download inside the app when needed.
 
-Linux AppImages include the X11/Wayland window libraries. They target glibc 2.35 or newer and use the host's graphics drivers. The release workflow tests graphical startup on Debian, Fedora and Arch. Alpine/musl is not supported. If FUSE is unavailable, run `./wessh-linux-x86_64.AppImage --appimage-extract-and-run`. A virtual webcam on Linux still requires the host's v4l2loopback kernel module; image processing and the app preview do not.
+Linux AppImages include the X11/Wayland window libraries, curl and HTTPS certificates. They target glibc 2.35 or newer and use the host's graphics drivers. The release workflow tests graphical startup on Debian, Fedora and Arch. Alpine/musl is not supported. If FUSE is unavailable, run `./wessh-linux-x86_64.AppImage --appimage-extract-and-run`. A virtual webcam on Linux still requires the host's v4l2loopback kernel module; image processing and the app preview do not.
 
 Portable archives and the command-line installers in `scripts/` remain available for terminal users. `wessh doctor` diagnoses runtime and model installation.
 

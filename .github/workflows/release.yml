@@ -84,7 +84,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxrender1 libxfixes3 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1
+          sudo apt-get install -y file curl ca-certificates libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxrender1 libxfixes3 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1
           arch="${{ matrix.target }}"
           arch="${arch%%-*}"
           tools="$RUNNER_TEMP/appimage-tools"

@@ -9,6 +9,8 @@ image="$(realpath "$image")"
 (cd "$work" && "$image" --appimage-extract >/dev/null)
 app="$work/squashfs-root/AppRun"
 "$app" --version
+LD_LIBRARY_PATH="$work/squashfs-root/usr/lib" "$work/squashfs-root/usr/bin/curl" --version
+[[ -s "$work/squashfs-root/usr/share/wessh/ca-certificates.crt" ]]
 Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >"$work/xvfb.log" 2>&1 &
 display_pid="$!"
 export DISPLAY=:99

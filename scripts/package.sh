@@ -99,9 +99,11 @@ case "$target" in
         libraries+=(--library "$library")
     done
     APPIMAGE_EXTRACT_AND_RUN=1 "$LINUXDEPLOY" --appdir "$appdir" \
-        --executable "$release/wessh" --desktop-file scripts/linux/wessh.desktop \
+        --executable "$release/wessh" --executable "$(command -v curl)" --desktop-file scripts/linux/wessh.desktop \
         --icon-file "$icon/wessh-256.png" --icon-filename wessh \
         --custom-apprun scripts/linux/AppRun "${libraries[@]}"
+    mkdir -p "$appdir/usr/share/wessh"
+    cp /etc/ssl/certs/ca-certificates.crt "$appdir/usr/share/wessh/ca-certificates.crt"
     # glibc and graphics drivers belong to the host; never ship a vendor GPU driver.
     APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$arch" "$APPIMAGETOOL" --no-appstream "$appdir" "dist/wessh-linux-$arch.AppImage"
     rm -rf "$appdir"
