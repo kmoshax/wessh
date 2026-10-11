@@ -22,7 +22,7 @@ parking_lot = "0.12"
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-dirs = "6"
+dirs = "7"
 # Native webcam capture (V4L2 / Media Foundation / AVFoundation); frames are converted by us.
 nokhwa = { version = "0.10.11", default-features = false, features = ["input-native"] }
 # Writing frames to a v4l2loopback virtual camera.
