@@ -125,6 +125,7 @@ fn decode_jpeg(src: &[u8], width: usize, height: usize, out: &mut [u8]) -> Resul
 }
 
 /// Studio-swing BT.601 RGB → YUV in 8.8 fixed point.
+#[cfg(any(target_os = "linux", test))]
 mod bt601_inverse {
     pub const Y: [i32; 3] = [66, 129, 25];
     pub const U: [i32; 3] = [-38, -74, 112];
@@ -132,6 +133,7 @@ mod bt601_inverse {
 }
 
 /// Convert BGR into packed YUYV (`width` must be even), chroma averaged over each pixel pair.
+#[cfg(any(target_os = "linux", test))]
 pub fn bgr_to_yuyv(src: &[u8], width: usize, height: usize, out: &mut [u8]) {
     use bt601::{CHROMA_OFFSET, LUMA_OFFSET, ROUND, SHIFT};
     use bt601_inverse::{U, V, Y};

@@ -136,11 +136,15 @@ impl FrameSink {
 
 impl Drop for FrameSink {
     fn drop(&mut self) {
-        if let Backend::Ffmpeg { process, stdin } = &mut self.backend {
-            if stdin.take().is_some() {
-                let _ = process.kill();
+        match &mut self.backend {
+            Backend::Ffmpeg { process, stdin } => {
+                if stdin.take().is_some() {
+                    let _ = process.kill();
+                }
+                let _ = process.wait();
             }
-            let _ = process.wait();
+            #[cfg(target_os = "linux")]
+            Backend::Loopback { .. } => {}
         }
     }
 }
