@@ -5,6 +5,9 @@
 
 **wessh** (وشي, “my face”) is an educational, native Rust app for real-time face swapping. No Python environment needed.
 
+> [!CAUTION]
+> **Educational and experimental project.** Provided as is, without warranties. Use media with permission and the consent of the people depicted. Do not use it for deception, harassment or non-consensual content. You are responsible for your use and outputs; third-party models have their own terms.
+
 <table>
   <tr>
     <td width="70%" align="center">
@@ -170,10 +173,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 - XSeg occlusion and BiSeNet region masks, mouth mask
 - CoreML execution provider on Apple Silicon
 - Native virtual camera on Windows 11 (`MFCreateVirtualCamera`) and macOS (Camera Extension)
-
-## Educational use & disclaimer
-
-wessh is an educational and experimental project, provided **as is**, without warranties. Use only media you own or have permission to use, with the consent of the people depicted. Do not use it for impersonation, deception, harassment or non-consensual content. You are responsible for your use and outputs; third-party models have their own licenses and usage terms.
 
 ## License
 
