@@ -1,6 +1,6 @@
-# Contributing to weshy
+# Contributing to wessh
 
-Thanks for helping. weshy aims to be the fastest and easiest-to-install face swapper, so
+Thanks for helping. wessh aims to be the fastest and easiest-to-install face swapper, so
 changes are judged on two things above all: latency and install friction.
 
 ## Getting started
@@ -9,12 +9,12 @@ You need Rust 1.99 (pinned in `rust-toolchain.toml`, which rustup picks up), `cu
 on `PATH`.
 
 ```sh
-git clone https://github.com/kmoshax/weshy && cd weshy
+git clone https://github.com/kmoshax/wessh && cd wessh
 cargo build
 # Runtime, CUDA libraries and models into a throwaway data dir, leaving your own install alone:
-WESHY_HOME=/tmp/weshy-dev cargo run -- setup
-WESHY_HOME=/tmp/weshy-dev cargo run -- doctor
-WESHY_HOME=/tmp/weshy-dev cargo run --release            # the app
+WESSH_HOME=/tmp/wessh-dev cargo run -- setup
+WESSH_HOME=/tmp/wessh-dev cargo run -- doctor
+WESSH_HOME=/tmp/wessh-dev cargo run --release            # the app
 ```
 
 `cargo run -- setup --dry-run` shows what would be downloaded without touching anything.
@@ -38,8 +38,8 @@ cargo test --workspace --locked
 
 ## Code conventions
 
-- Libraries (`weshy-core`, `weshy-media`) return typed errors (`thiserror`); the binary
-  (`weshy-app`) uses `anyhow` and adds context.
+- Libraries (`wessh-core`, `wessh-media`) return typed errors (`thiserror`); the binary
+  (`wessh-app`) uses `anyhow` and adds context.
 - No magic numbers: name constants and say where they come from (a model's input size, a
   driver version, a protocol limit).
 - No `unsafe` (the workspace forbids it).
@@ -52,22 +52,22 @@ cargo test --workspace --locked
 
 | Crate         | Role                                                                          |
 | ------------- | ----------------------------------------------------------------------------- |
-| `weshy-core`  | the face pipeline on ONNX Runtime; no I/O besides model files                 |
-| `weshy-media` | ffmpeg subprocesses: webcam capture, virtual camera / stream output, video    |
-| `weshy-app`   | the `weshy` binary: CLI, headless commands, installer and the egui app        |
+| `wessh-core`  | the face pipeline on ONNX Runtime; no I/O besides model files                 |
+| `wessh-media` | ffmpeg subprocesses: webcam capture, virtual camera / stream output, video    |
+| `wessh-app`   | the `wessh` binary: CLI, headless commands, installer and the egui app        |
 
-Dependencies point one way: `weshy-app` → `weshy-media` → `weshy-core`. The core knows nothing
+Dependencies point one way: `wessh-app` → `wessh-media` → `wessh-core`. The core knows nothing
 about ffmpeg, the CLI or the UI, and the media crate never runs inference.
 
 ## Benchmarks
 
-`weshy bench` runs the full pipeline on one image and prints per-stage timings averaged over
+`wessh bench` runs the full pipeline on one image and prints per-stage timings averaged over
 `-n` iterations, after a warm-up:
 
 ```sh
 cargo build --release
-./target/release/weshy bench -s source.jpg -t target.jpg -n 200 --device cuda
-./target/release/weshy bench -s source.jpg -t target.jpg -n 200 --device cpu --detector-size 320
+./target/release/wessh bench -s source.jpg -t target.jpg -n 200 --device cuda
+./target/release/wessh bench -s source.jpg -t target.jpg -n 200 --device cpu --detector-size 320
 ```
 
 When a change touches the pipeline, include before/after numbers (device, GPU/CPU model,
@@ -82,8 +82,8 @@ arm64, Windows x86-64 and macOS arm64 / x86-64 archives with `scripts/package.sh
 them with a `SHA256SUMS` file to a draft GitHub release, and leaves it for review. Bump
 `version` in the root `Cargo.toml` first.
 
-`sources::ORT_VERSION` in `crates/weshy-app/src/commands/setup/sources.rs` pins the ONNX Runtime
-release `weshy setup` installs; update it together with the `ort` crate.
+`sources::ORT_VERSION` in `crates/wessh-app/src/commands/setup/sources.rs` pins the ONNX Runtime
+release `wessh setup` installs; update it together with the `ort` crate.
 
 ## Releasing
 

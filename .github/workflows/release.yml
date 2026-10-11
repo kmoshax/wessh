@@ -1,7 +1,7 @@
 name: Release
 
 # Portable archives: the binary plus README and licenses. ONNX Runtime, CUDA and the models are
-# not bundled; `weshy setup` fetches the right ones for each machine, which keeps downloads tiny.
+# not bundled; `wessh setup` fetches the right ones for each machine, which keeps downloads tiny.
 #
 # To release: bump `version` in Cargo.toml, commit, then tag and push it:
 #   git tag v0.3.0 && git push origin v0.3.0
@@ -61,13 +61,13 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p weshy
+        run: cargo build --release --locked --target ${{ matrix.target }} -p wessh
       - name: package
         shell: bash
         run: scripts/package.sh "${{ matrix.target }}" "${GITHUB_REF_NAME}"
       - uses: actions/upload-artifact@v4
         with:
-          name: weshy-${{ matrix.target }}
+          name: wessh-${{ matrix.target }}
           path: dist/*
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
           merge-multiple: true
       - name: checksums
         working-directory: dist
-        run: sha256sum weshy-* > SHA256SUMS
+        run: sha256sum wessh-* > SHA256SUMS
       # Published right away: the installers fetch the latest published release.
       - uses: softprops/action-gh-release@v2
         with:

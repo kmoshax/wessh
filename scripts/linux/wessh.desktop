@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=wessh
+GenericName=Face swap
+Comment=Real-time face swap for your camera and videos
+Exec=wessh
+Icon=wessh
+Terminal=false
+Categories=AudioVideo;Video;
+StartupWMClass=wessh

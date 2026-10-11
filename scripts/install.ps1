@@ -1,24 +1,24 @@
-# Install the latest weshy release and prepare the machine (Windows x64).
+# Install the latest wessh release and prepare the machine (Windows x64).
 #
-#   irm https://raw.githubusercontent.com/kmoshax/weshy/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/kmoshax/wessh/main/scripts/install.ps1 | iex
 #
-# Environment: WESHY_VERSION (tag, default latest), WESHY_INSTALL_DIR
-# (default %LOCALAPPDATA%\Programs\weshy), WESHY_SKIP_SETUP=1 to only install the binary.
+# Environment: WESSH_VERSION (tag, default latest), WESSH_INSTALL_DIR
+# (default %LOCALAPPDATA%\Programs\wessh), WESSH_SKIP_SETUP=1 to only install the binary.
 $ErrorActionPreference = 'Stop'
-$repo = 'kmoshax/weshy'
+$repo = 'kmoshax/wessh'
 $target = 'x86_64-pc-windows-msvc'
 
-$tag = $env:WESHY_VERSION
+$tag = $env:WESSH_VERSION
 if (-not $tag) { $tag = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest").tag_name }
-$dir = $env:WESHY_INSTALL_DIR
-if (-not $dir) { $dir = Join-Path $env:LOCALAPPDATA 'Programs\weshy' }
-$name = "weshy-$tag-$target"
+$dir = $env:WESSH_INSTALL_DIR
+if (-not $dir) { $dir = Join-Path $env:LOCALAPPDATA 'Programs\wessh' }
+$name = "wessh-$target"
 $base = "https://github.com/$repo/releases/download/$tag"
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
-    Write-Host "downloading weshy $tag for $target"
+    Write-Host "downloading wessh $tag for $target"
     Invoke-WebRequest "$base/$name.zip" -OutFile "$tmp\$name.zip"
     Invoke-WebRequest "$base/SHA256SUMS" -OutFile "$tmp\SHA256SUMS"
     $expected = (Select-String -Path "$tmp\SHA256SUMS" -Pattern " $name.zip$").Line.Split(' ')[0]
@@ -26,11 +26,14 @@ try {
     if ($expected -ne $actual) { throw "checksum mismatch for $name.zip" }
     Expand-Archive "$tmp\$name.zip" -DestinationPath $tmp
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    Copy-Item "$tmp\$name\*" $dir -Force
+    Copy-Item "$tmp\wessh.exe" $dir -Force
+    Copy-Item "$tmp\wessh-cli.exe" $dir -Force
+    Copy-Item "$tmp\README.md" $dir -Force
+    Copy-Item "$tmp\LICENSE" $dir -Force
 } finally {
     Remove-Item -Recurse -Force $tmp
 }
-Write-Host "installed $dir\weshy.exe"
+Write-Host "installed $dir\wessh.exe"
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $dir) {
@@ -38,4 +41,4 @@ if (($userPath -split ';') -notcontains $dir) {
     Write-Host "added $dir to your user PATH (open a new terminal to use it)"
 }
 
-if ($env:WESHY_SKIP_SETUP -ne '1') { & "$dir\weshy.exe" setup @args }
+if ($env:WESSH_SKIP_SETUP -ne '1') { & "$dir\wessh.exe" setup @args }

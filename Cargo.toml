@@ -7,11 +7,11 @@ version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
-repository = "https://github.com/kmoshax/weshy"
+repository = "https://github.com/kmoshax/wessh"
 
 [workspace.dependencies]
-weshy-core = { path = "crates/weshy-core" }
-weshy-media = { path = "crates/weshy-media" }
+wessh-core = { path = "crates/wessh-core" }
+wessh-media = { path = "crates/wessh-media" }
 # ONNX Runtime is loaded at runtime, so the binary stays small and GPU support is a drop-in.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-28", "cuda", "tensorrt", "coreml", "lax-feature-matching"] }
 eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }

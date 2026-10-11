@@ -1,0 +1,20 @@
+[package]
+name = "wessh-media"
+description = "Webcam capture, virtual camera output and video file I/O"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+wessh-core.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+nokhwa.workspace = true
+image.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l.workspace = true
+
+[lints]
+workspace = true

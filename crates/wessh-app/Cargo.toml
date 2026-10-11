@@ -1,0 +1,42 @@
+[package]
+name = "wessh"
+description = "Real-time face swap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wessh"
+path = "src/main.rs"
+
+[features]
+# Windows: build a console program (`wessh-cli.exe`) instead of the windowed app, so the
+# commands print to the terminal. No effect elsewhere.
+console = []
+
+[dependencies]
+wessh-core = { workspace = true, features = ["clap"] }
+wessh-media.workspace = true
+eframe.workspace = true
+image.workspace = true
+crossbeam-channel.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+ort.workspace = true
+# `wessh setup`: registry metadata, checksums and archive extraction (downloads go through curl).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+
+[build-dependencies]
+# Embeds the icon and version info into wessh.exe (does nothing for other targets).
+winresource = "0.1.31"
+
+[lints]
+workspace = true

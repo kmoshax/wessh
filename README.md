@@ -1,44 +1,44 @@
-# weshy
+# wessh
 
-[![CI](https://github.com/kmoshax/weshy/actions/workflows/ci.yml/badge.svg)](https://github.com/kmoshax/weshy/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/kmoshax/weshy)](https://github.com/kmoshax/weshy/releases/latest)
+[![CI](https://github.com/kmoshax/wessh/actions/workflows/ci.yml/badge.svg)](https://github.com/kmoshax/wessh/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/kmoshax/wessh)](https://github.com/kmoshax/wessh/releases/latest)
 
-*weshy* (وشي) is Arabic for "my face". Real-time face swap in Rust. A lighter, faster take on Deep-Live-Cam: one native binary,
+*wessh* (وشي) is Arabic for "my face". Real-time face swap in Rust. A lighter, faster take on Deep-Live-Cam: one native binary,
 no Python, no PyTorch and no multi-gigabyte environment to build.
 
 ## Quick start
 
 1. **Download** the archive for your platform from
-   [Releases](https://github.com/kmoshax/weshy/releases) and unpack it, or use the installer:
+   [Releases](https://github.com/kmoshax/wessh/releases) and unpack it, or use the installer:
 
    ```sh
    # Linux / macOS
-   curl -fsSL https://raw.githubusercontent.com/kmoshax/weshy/main/scripts/install.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/kmoshax/wessh/main/scripts/install.sh | sh
    ```
 
    ```powershell
    # Windows
-   irm https://raw.githubusercontent.com/kmoshax/weshy/main/scripts/install.ps1 | iex
+   irm https://raw.githubusercontent.com/kmoshax/wessh/main/scripts/install.ps1 | iex
    ```
 
-2. **Set up** the machine. `weshy setup` detects your GPU and driver, installs the matching
+2. **Set up** the machine. `wessh setup` detects your GPU and driver, installs the matching
    ONNX Runtime build, the CUDA / cuDNN and TensorRT libraries it needs (NVIDIA only, no CUDA
-   toolkit install required) and weshy's curated models. Starting the app without it works too:
+   toolkit install required) and wessh's curated models. Starting the app without it works too:
    a first-run screen downloads the same things, with pause and resume:
 
    ```sh
-   weshy setup --dry-run   # optional: see what would be downloaded, and how much
-   weshy setup
+   wessh setup --dry-run   # optional: see what would be downloaded, and how much
+   wessh setup
    ```
 
 3. **Run** it:
 
    ```sh
-   weshy
+   wessh
    ```
 
-If anything misbehaves, `weshy doctor` reports what is installed and prints the exact command
-that fixes each problem. The only thing `weshy setup` can't install for you is ffmpeg (used for
+If anything misbehaves, `wessh doctor` reports what is installed and prints the exact command
+that fixes each problem. The only thing `wessh setup` can't install for you is ffmpeg (used for
 the camera and video modes); it prints the command for your OS if ffmpeg is missing.
 
 ## Features
@@ -62,11 +62,11 @@ the camera and video modes); it prints the command for your OS if ffmpeg is miss
 - ONNX Runtime is loaded dynamically: the binary stays small, and CUDA / TensorRT are a drop-in.
 - Source embeddings, feather masks and inswapper's embedding map are computed once and cached.
 
-## weshy vs Deep-Live-Cam
+## wessh vs Deep-Live-Cam
 
-|                           | weshy                                        | Deep-Live-Cam                                                     |
+|                           | wessh                                        | Deep-Live-Cam                                                     |
 | ------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
-| Install steps             | download, `weshy setup`, run                 | Python 3.10 + git + ffmpeg + (Windows) VS build tools, clone, venv, `pip install`, download models by hand, CUDA toolkit + cuDNN for GPU |
+| Install steps             | download, `wessh setup`, run                 | Python 3.10 + git + ffmpeg + (Windows) VS build tools, clone, venv, `pip install`, download models by hand, CUDA toolkit + cuDNN for GPU |
 | Application download      | ≈ 3.5 MB archive (7 MB binary, Linux x86-64) | TODO (clone + `pip install`)                                      |
 | Runtime + models, CPU     | ≈ 460 MB (ONNX Runtime 24 MB + models)      | TODO GB                                                           |
 | Runtime + models, NVIDIA  | ≈ 1.9 GB download, ≈ 2.8 GB on disk         | TODO GB                                                           |
@@ -74,23 +74,23 @@ the camera and video modes); it prints the command for your OS if ffmpeg is miss
 | Live latency, NVIDIA GPU  | TODO ms / frame                             | TODO ms / frame                                                   |
 | System-wide changes       | none (one data directory)                   | Python packages, CUDA toolkit                                     |
 
-Latency is measured with `weshy bench` (per-stage timings) on the same machine and source/target
+Latency is measured with `wessh bench` (per-stage timings) on the same machine and source/target
 images; see [CONTRIBUTING.md](CONTRIBUTING.md#benchmarks).
 
 ## Commands
 
-Run `weshy <command> --help` for every option.
+Run `wessh <command> --help` for every option.
 
 ```sh
-weshy                                              # desktop app
-weshy image -s me.jpg -t photo.jpg -o out.jpg      # swap faces in an image
-weshy video -s me.jpg -t clip.mp4 -o out.mp4
-weshy cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
-weshy cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
-weshy bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
-weshy models                                       # download the curated models
-weshy setup                                        # install runtime, CUDA / TensorRT libraries, models
-weshy doctor                                       # diagnose the installation
+wessh                                              # desktop app
+wessh image -s me.jpg -t photo.jpg -o out.jpg      # swap faces in an image
+wessh video -s me.jpg -t clip.mp4 -o out.mp4
+wessh cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
+wessh cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
+wessh bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
+wessh models                                       # download the curated models
+wessh setup                                        # install runtime, CUDA / TensorRT libraries, models
+wessh doctor                                       # diagnose the installation
 ```
 
 Global options:
@@ -103,7 +103,7 @@ Global options:
 | `--detector-size 320\|480\|640`                          | detector input; smaller is faster                |
 | `--ort <path>`                                          | use a specific ONNX Runtime library              |
 
-`weshy setup` options:
+`wessh setup` options:
 
 | Option                           | Meaning                                                              |
 | -------------------------------- | -------------------------------------------------------------------- |
@@ -131,9 +131,9 @@ toolkit is needed — only the NVIDIA driver.
 
 ## Files and environment
 
-Everything weshy downloads lives in one directory: `$WESHY_HOME`, or by default
-`~/.local/share/weshy` (Linux), `~/Library/Application Support/weshy` (macOS),
-`%LOCALAPPDATA%\weshy` (Windows).
+Everything wessh downloads lives in one directory: `$WESSH_HOME`, or by default
+`~/.local/share/wessh` (Linux), `~/Library/Application Support/wessh` (macOS),
+`%LOCALAPPDATA%\wessh` (Windows).
 
 ```text
 <data dir>/ort/lib/          ONNX Runtime and its provider plugins
@@ -144,40 +144,40 @@ Everything weshy downloads lives in one directory: `$WESHY_HOME`, or by default
 
 Uninstalling is deleting that directory and the binary.
 
-weshy looks for ONNX Runtime in this order: `--ort <path>`, `ORT_DYLIB_PATH`, next to the
+wessh looks for ONNX Runtime in this order: `--ort <path>`, `ORT_DYLIB_PATH`, next to the
 executable (also `./ort/lib` and `./lib`), then `<data dir>/ort/lib`.
 
 | Variable                         | Effect                                                   |
 | -------------------------------- | -------------------------------------------------------- |
-| `WESHY_HOME`                      | data directory                                           |
+| `WESSH_HOME`       | data directory                                           |
 | `ORT_DYLIB_PATH`                 | ONNX Runtime library to load                             |
-| `WESHY_CUDA_DIR`                  | directory of CUDA libraries to preload                   |
-| `WESHY_THREADS`                   | CPU inference threads (default: one per physical core)   |
-| `WESHY_FFMPEG`                   | ffmpeg executable to run                                 |
+| `WESSH_CUDA_DIR`                  | directory of CUDA libraries to preload                   |
+| `WESSH_THREADS`                   | CPU inference threads (default: one per physical core)   |
+| `WESSH_FFMPEG`                   | ffmpeg executable to run                                 |
 
 ### Virtual camera on Linux
 
 ```sh
-sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="weshy" exclusive_caps=1
-weshy cam -s me.jpg --out /dev/video10
+sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="wessh" exclusive_caps=1
+wessh cam -s me.jpg --out /dev/video10
 ```
 
-`weshy doctor` tells you whether the module is installed and loaded.
+`wessh doctor` tells you whether the module is installed and loaded.
 
 ## Platform notes
 
 - **Intel Macs**: Microsoft no longer publishes ONNX Runtime for macOS x86-64. Install it with
   `brew install onnxruntime` and pass `--ort "$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"`.
 - **Windows without NVIDIA**: runs on the CPU. DirectML builds of ONNX Runtime stop at 1.24,
-  older than the 1.28 weshy needs.
+  older than the 1.28 wessh needs.
 - **Linux arm64 with NVIDIA** (Jetson and similar): ONNX Runtime publishes no GPU build, so
-  `weshy setup` installs the CPU one; point `--ort` at a JetPack build to use the GPU.
+  `wessh setup` installs the CPU one; point `--ort` at a JetPack build to use the GPU.
 
 ## Building from source
 
 ```sh
 cargo build --release
-./target/release/weshy setup
+./target/release/wessh setup
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
@@ -194,6 +194,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
 Copyright (C) 2026 kmoshax.
 
-weshy is free software, licensed under the [GNU Affero General Public License v3.0 only](LICENSE).
+wessh is free software, licensed under the [GNU Affero General Public License v3.0 only](LICENSE).
 You may use, study, modify and share it, but anything you distribute or offer to others over a
-network that is built on weshy must be released, in full source, under the same license.
+network that is built on wessh must be released, in full source, under the same license.
