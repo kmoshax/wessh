@@ -44,13 +44,13 @@ jobs:
         with:
           shared-key: checks
       - name: clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --profile ci --locked -- -D warnings
       - name: test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --profile ci --locked
       # Resolves every download for this platform (GitHub + PyPI + Hugging Face metadata only),
       # which catches renamed release assets before users hit them.
       - name: setup --dry-run
         shell: bash
-        run: cargo run --locked -- setup --dry-run
+        run: cargo run --profile ci --locked -- setup --dry-run
         env:
           WESSH_HOME: ${{ runner.temp }}/wessh

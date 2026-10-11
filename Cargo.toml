@@ -61,3 +61,12 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+# CI checks correctness without spending time optimizing test executables.
+[profile.ci]
+inherits = "dev"
+opt-level = 0
+debug = 0
+
+[profile.ci.package."*"]
+opt-level = 0
