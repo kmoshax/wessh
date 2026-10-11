@@ -54,6 +54,14 @@ impl Affine {
         Affine([a, -b, tx, b, a, ty])
     }
 
+    /// `self` followed by `next`: maps `p` to `next.apply(self.apply(p))`.
+    #[must_use]
+    pub fn then(&self, next: &Affine) -> Affine {
+        let [a, b, c, d, e, f] = self.0;
+        let [na, nb, nc, nd, ne, nf] = next.0;
+        Affine([na * a + nb * d, na * b + nb * e, na * c + nb * f + nc, nd * a + ne * d, nd * b + ne * e, nd * c + ne * f + nf])
+    }
+
     /// Uniform scale factor of the transform.
     #[must_use]
     pub fn scale(&self) -> f32 {
@@ -94,6 +102,8 @@ impl Rect {
 pub enum Template {
     Arcface112,
     Arcface128,
+    /// FFHQ alignment used by GFPGAN (`FFHQ_TEMPLATE_512` / 512 in Deep-Live-Cam).
+    Ffhq512,
 }
 
 impl Template {
@@ -106,6 +116,13 @@ impl Template {
                 [0.50022500, 0.64050536],
                 [0.37097589, 0.82469196],
                 [0.63151696, 0.82325089],
+            ],
+            Template::Ffhq512 => [
+                [0.37691676, 0.46864664],
+                [0.62285697, 0.46912813],
+                [0.50123859, 0.61331904],
+                [0.39308822, 0.72541100],
+                [0.61150205, 0.72490465],
             ],
             Template::Arcface128 => [
                 [0.36167656, 0.40387734],
@@ -128,6 +145,13 @@ impl Template {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn then_composes_in_order() {
+        let shift = Affine([1.0, 0.0, 5.0, 0.0, 1.0, -2.0]);
+        let double = Affine([2.0, 0.0, 0.0, 0.0, 2.0, 0.0]);
+        assert_eq!(shift.then(&double).apply([1.0, 1.0]), double.apply(shift.apply([1.0, 1.0])));
+    }
 
     #[test]
     fn square_is_shifted_inside_the_image() {

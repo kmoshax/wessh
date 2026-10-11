@@ -91,6 +91,6 @@ mod tests {
         let sims = [0.7, 0.1, 0.5];
         assert_eq!(xs(&select(faces.clone(), Some(&sims), 0.4, FaceOrder::LeftToRight, true)), [50.0, 100.0]);
         assert_eq!(xs(&select(faces.clone(), Some(&sims), 0.4, FaceOrder::LargeToSmall, false)), [100.0]);
-        assert!(select(faces, Some(&sims), 0.9, FaceOrder::LargeToSmall, true).is_empty());
+        assert_eq!(xs(&select(faces, Some(&sims), 0.9, FaceOrder::LargeToSmall, true)), [0.0; 0]);
     }
 }

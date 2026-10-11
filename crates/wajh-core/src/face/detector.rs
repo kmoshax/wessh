@@ -17,7 +17,7 @@ const KEYPOINT_LEN: usize = 10;
 /// Name of SCRFD's symbolic input height/width dimension.
 const SIZE_DIMENSION: &str = "?";
 
-/// SCRFD face detector with 5-point landmarks.
+/// SCRFD 10G face detector with 5-point landmarks.
 ///
 /// One bound session is kept per input size: a fixed shape lets ONNX Runtime fold SCRFD's shape
 /// arithmetic, keep every node on the GPU and replay the network as a CUDA graph, which matters
@@ -71,7 +71,11 @@ impl Detector {
         let size = snap_size(size);
         let threshold = self.score_threshold;
         let model = self.model(size)?;
-        let to_frame = letterbox_region_nchw_into(frame, region, size, model.input_mut(0));
+        let input = model.input_mut(0);
+        let to_frame = letterbox_region_nchw_into(frame, region, size, input);
+        // InsightFace trained SCRFD 10G on RGB (`blobFromImage(.., swapRB=True)`); the letterbox is BGR.
+        let (blue, green_red) = input.split_at_mut(size * size);
+        blue.swap_with_slice(&mut green_red[size * size..]);
         model.run()?;
         let outputs: Vec<&[f32]> = (0..STRIDES.len() * 3).map(|i| model.output(i)).collect();
         let transform = TensorToFrame { scale: to_frame, origin: [region.x as f32, region.y as f32] };

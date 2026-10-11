@@ -22,9 +22,23 @@ macro_rules! facefusion {
     };
 }
 
-pub const DETECTOR: Asset = facefusion!("models-3.0.0", "scrfd_2.5g");
+/// A model from Deep-Live-Cam's repository, stored under our own file name.
+macro_rules! deep_live_cam {
+    ($path:literal, $name:literal) => {
+        Asset {
+            name: $name,
+            file: concat!($name, ".onnx"),
+            url: concat!("https://huggingface.co/hacksider/deep-live-cam/resolve/main/", $path),
+        }
+    };
+}
+
+/// InsightFace SCRFD 10G (`buffalo_l`), the detector Deep-Live-Cam uses. Its landmarks are far
+/// more precise than SCRFD 2.5G's, and the landmarks decide how well the swapped face sits.
+pub const DETECTOR: Asset = deep_live_cam!("buffalo_l/buffalo_l/det_10g.onnx", "det_10g");
 pub const RECOGNIZER: Asset = facefusion!("models-3.0.0", "arcface_w600k_r50");
-pub const ENHANCER: Asset = facefusion!("models-3.0.0", "gpen_bfr_256");
+/// GFPGAN 1.4 (512 px in, 1024 px out), the restorer Deep-Live-Cam uses.
+pub const ENHANCER: Asset = deep_live_cam!("gfpgan-1024.onnx", "gfpgan_1024");
 /// `BiSeNet` face parser (19 `CelebAMask-HQ` classes, 512px).
 pub const PARSER: Asset = facefusion!("models-3.0.0", "bisenet_resnet_34");
 /// The lighter `BiSeNet` backbone, same classes and resolution.
@@ -66,11 +80,13 @@ impl OccluderModel {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum SwapModel {
-    /// InsightFace inswapper, 128px, fp16.
-    Inswapper,
-    /// FaceFusion HyperSwap 1a, 256px. The default: sharper than inswapper's 128px output and,
-    /// on NVIDIA GPUs, faster too (≈10 ms with TensorRT vs ≈22 ms).
+    /// InsightFace inswapper, 128px, fp16. The default: across a 4 × 14 source/target set it
+    /// carried the source identity far better than HyperSwap (`ArcFace` similarity 0.84 vs 0.74)
+    /// and left less of the target behind, at the same score as Deep-Live-Cam.
     #[default]
+    Inswapper,
+    /// FaceFusion HyperSwap 1a, 256px. Sharper and, with TensorRT, faster (≈10 ms vs ≈22 ms), but
+    /// a weaker identity transfer.
     Hyperswap1a,
     /// FaceFusion HyperSwap 1b, 256px.
     Hyperswap1b,

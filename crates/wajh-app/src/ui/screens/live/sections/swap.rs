@@ -98,7 +98,7 @@ pub(super) fn mask(ui: &mut Ui, frame: &mut Frame<'_>) {
 pub(super) fn enhance(ui: &mut Ui, frame: &mut Frame<'_>) {
     let settings = &mut *frame.settings;
     toggle_section(ui, icons::AUTO_AWESOME, "Enhance", &mut settings.enhance, |ui| {
-        description(ui, "Restore skin and eye detail with GPEN. Costs a few milliseconds per face.");
+        description(ui, "Restore skin and eye detail with GFPGAN, as much as the camera picture itself holds.");
         labeled_slider(ui, "Blend", &mut settings.enhance_blend, 0.0..=1.0, percent);
     });
 }

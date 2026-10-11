@@ -1,3 +1,4 @@
+use crate::geometry::Rect;
 use rayon::prelude::*;
 
 /// Interleaved 8-bit BGR image — the layout ffmpeg produces and OpenCV-trained models expect.
@@ -20,6 +21,18 @@ impl Frame {
     #[must_use]
     pub fn new(width: usize, height: usize) -> Self {
         Self { width, height, data: vec![0; width * height * Self::CHANNELS] }
+    }
+
+    /// Copy `rect` of this frame into `out`, reusing its buffer.
+    pub fn crop_into(&self, rect: Rect, out: &mut Self) {
+        let row = rect.width * Self::CHANNELS;
+        out.width = rect.width;
+        out.height = rect.height;
+        out.data.clear();
+        for y in rect.y..rect.y + rect.height {
+            let start = (y * self.width + rect.x) * Self::CHANNELS;
+            out.data.extend_from_slice(&self.data[start..start + row]);
+        }
     }
 
     #[must_use]
@@ -92,6 +105,15 @@ fn swap_red_blue(data: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::Frame;
+    use crate::geometry::Rect;
+
+    #[test]
+    fn crop_into_copies_the_rect() {
+        let f = Frame { width: 3, height: 2, data: (0..18).collect() };
+        let mut out = Frame::default();
+        f.crop_into(Rect { x: 1, y: 1, width: 2, height: 1 }, &mut out);
+        assert_eq!((out.width, out.height, out.data), (2, 1, vec![12, 13, 14, 15, 16, 17]));
+    }
 
     #[test]
     fn mirror_reverses_pixels() {

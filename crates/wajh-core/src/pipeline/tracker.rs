@@ -43,7 +43,8 @@ pub struct TrackerConfig {
     /// between frames and still be found.
     pub region_scale: f32,
     /// Detector input size for a search square. The face then spans about
-    /// `region_size / region_scale` pixels, plenty for SCRFD's landmarks.
+    /// `region_size / region_scale` ≈ 145 px: at 192 px (≈ 87 px faces) the landmarks were
+    /// visibly less precise than a full 640 px pass, which shifts the swapped face.
     pub region_size: usize,
     /// Frames between full detections, which discover faces that entered the picture.
     pub full_detection_interval: u32,
@@ -55,7 +56,7 @@ pub struct TrackerConfig {
 
 impl Default for TrackerConfig {
     fn default() -> Self {
-        Self { region_scale: 2.2, region_size: 192, full_detection_interval: 30, max_regions: 2, max_jump: 0.6 }
+        Self { region_scale: 2.2, region_size: 320, full_detection_interval: 30, max_regions: 2, max_jump: 0.6 }
     }
 }
 

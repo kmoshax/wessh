@@ -296,7 +296,7 @@ mod tests {
     fn engine_cache_prefix_names_the_pinned_shapes() {
         let at = |size| cache_prefix(&assets::DETECTOR, &[("input_H", size)], false);
         assert_ne!(at(640), at(192));
-        assert_eq!(at(192), "scrfd_2.5g_inputH192");
+        assert_eq!(at(192), "det_10g_inputH192");
         assert_eq!(cache_prefix(&assets::PARSER, &[], true), "bisenet_resnet_34_patched");
     }
 }

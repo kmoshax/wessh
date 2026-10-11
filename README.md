@@ -43,8 +43,8 @@ the camera and video modes); it prints the command for your OS if ffmpeg is miss
 - Live webcam swap with an egui preview, per-stage timings, and virtual camera output
   (`/dev/videoN` via v4l2loopback on Linux, or `udp://` for OBS on any OS)
 - Image and video modes; video keeps the audio and encodes with NVENC / VideoToolbox when available
-- Swap models: inswapper 128 (fp16), HyperSwap 1a / 1b / 1c 256
-- GPEN-256 face enhancer (much faster than GFPGAN)
+- Swap models: inswapper 128 (fp16, the default), HyperSwap 1a / 1b / 1c 256
+- GFPGAN 1.4 face restoration, applied only as far as the original face's detail goes
 - One Euro landmark stabilisation, so the live swap doesn't jitter
 - Execution providers picked automatically: TensorRT (fp16, engine + timing cache) → CUDA → CPU
 - Self-contained installation: everything lives in one data directory, nothing is installed system-wide
@@ -95,7 +95,7 @@ Global options:
 | Option                                                  | Meaning                                          |
 | ------------------------------------------------------- | ------------------------------------------------ |
 | `--device auto\|tensorrt\|cuda\|cpu`                     | inference backend (default `auto`)               |
-| `--enhance true\|false`                                 | GPEN face restoration (default on)               |
+| `--enhance true\|false`                                 | GFPGAN face restoration (default on)             |
 | `--many-faces`                                          | swap every face, not only the largest            |
 | `--detector-size 320\|480\|640`                          | detector input; smaller is faster                |
 | `--ort <path>`                                          | use a specific ONNX Runtime library              |

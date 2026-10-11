@@ -23,17 +23,19 @@ pub struct Settings {
     /// With a reference face set, only swap faces whose identity distance (`1 - cosine
     /// similarity`) to it is below this.
     pub reference_distance: f32,
-    /// Restore detail with GPEN after swapping.
+    /// Restore detail with GFPGAN after swapping, up to the detail the original face had in the
+    /// frame (see `Processor`); faces that need none skip the restorer.
     pub enhance: bool,
-    /// How much of the restored face is blended in, `0..=1`.
+    /// Scales the restoration that matching the original's detail asks for, `0..=1`.
     pub enhance_blend: f32,
     /// Landmark stabilisation (live video only).
     pub stabilize: bool,
     /// Feather width of the paste mask, `0..=1` of the crop.
     pub mask_blur: f32,
     pub mask_padding: Padding,
-    /// Keep hands, hair and glasses that cover the face (`XSeg` occlusion mask). Costs one occluder
-    /// inference per face, so it is off by default.
+    /// Keep hands, hair and glasses that cover the face (`XSeg` occlusion mask). Off by default: it
+    /// costs an inference per face and, on small or soft faces, cuts into the face itself and lets
+    /// the target's features through (`ArcFace` similarity to the source 0.69 instead of 0.74).
     pub occlusion: bool,
     pub occluder_model: OccluderModel,
     /// Only swap the parser regions in `face_regions` (`BiSeNet` region mask).
@@ -71,16 +73,16 @@ impl Default for Settings {
             face_order: FaceOrder::default(),
             reference_distance: 0.6,
             enhance: true,
-            enhance_blend: 0.8,
+            enhance_blend: 1.0,
             stabilize: true,
             mask_blur: 0.3,
             mask_padding: [0.0; 4],
-            occlusion: true,
+            occlusion: false,
             occluder_model: OccluderModel::default(),
             region_mask: false,
             face_regions: FaceRegions::ALL,
             mouth_mask: false,
-            color_correction: 0.5,
+            color_correction: 0.0,
             mirror: false,
             detector_size: 640,
         }

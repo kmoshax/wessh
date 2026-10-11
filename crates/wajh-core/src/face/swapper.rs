@@ -76,11 +76,13 @@ impl Swapper {
         let Some(map) = &self.embedding_map else {
             return identity.normalized();
         };
-        let norm = identity.norm();
         let mut out = vec![0f32; EMBEDDING_LEN];
         for (value, row) in identity.0.iter().zip(map.as_chunks::<EMBEDDING_LEN>().0) {
             out.iter_mut().zip(row).for_each(|(o, w)| *o = value.mul_add(*w, *o));
         }
+        // InsightFace's `INSwapper.get` feeds the projected latent at unit length. Dividing by the
+        // embedding's norm instead (FaceFusion) leaves it ≈ 0.9 long and visibly weakens the identity.
+        let norm = out.iter().map(|o| o * o).sum::<f32>().sqrt().max(f32::EPSILON);
         for o in &mut out {
             *o /= norm;
         }

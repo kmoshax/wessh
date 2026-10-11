@@ -4,33 +4,92 @@ use super::tracker::{FaceTracker, TrackingDetector};
 use super::{FaceOrder, FaceSmoother, Settings, Stats, select};
 use crate::face::masker::{MASK_SIZE, compose_into};
 use crate::face::{AlignedCrop, Detector, Embedding, Enhancer, Face, Masker, Recognizer, Swapper};
-use crate::geometry::Template;
-use crate::image::{Frame, Padding, box_mask, match_color, paste_back, warp_crop};
+use crate::geometry::{Affine, Rect, Template};
+use crate::image::{Frame, Padding, box_mask, detail, face_mask, match_color, paste_back, warp_crop, warp_plane_into};
 use crate::runtime::{Backend, Engine};
 use crate::{Error, Result};
 use std::collections::VecDeque;
 use std::time::Instant;
 
-type MaskKey = (usize, u32, [u32; 4]);
-/// Box masks kept: enough for the swap and enhance crops, small enough that dragging a
+/// Geometric paste masks: an ellipse for swapped faces, a feathered box for restored ones
+/// (whose whole crop is the same face, just sharper).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    Face,
+    Box,
+}
+
+type MaskKey = (Shape, usize, u32, [u32; 4]);
+/// Shape masks kept: enough for the swap and enhance crops, small enough that dragging a
 /// blur/padding slider can't grow the cache without bound.
 const MASK_CACHE: usize = 4;
 
-/// Recently used box masks, most recent first.
-struct BoxMasks(VecDeque<(MaskKey, Vec<f32>)>);
+/// Recently used shape masks, most recent first.
+struct ShapeMasks(VecDeque<(MaskKey, Vec<f32>)>);
 
-impl BoxMasks {
-    fn get(&mut self, size: usize, blur: f32, padding: Padding) -> &[f32] {
-        let key = (size, blur.to_bits(), padding.map(f32::to_bits));
+impl ShapeMasks {
+    fn get(&mut self, shape: Shape, size: usize, blur: f32, padding: Padding) -> &[f32] {
+        let key = (shape, size, blur.to_bits(), padding.map(f32::to_bits));
         let entry = if let Some(i) = self.0.iter().position(|(k, _)| *k == key) {
             self.0.remove(i).expect("index in range")
         } else {
             self.0.truncate(MASK_CACHE - 1);
-            (key, box_mask(size, blur, padding))
+            let mask = match shape {
+                Shape::Face => face_mask(size, blur, padding),
+                Shape::Box => box_mask(size, blur, padding),
+            };
+            (key, mask)
         };
         self.0.push_front(entry);
         &self.0[0].1
     }
+}
+
+/// Side of the square whose detail stands for a face's, as a fraction of the face size: the
+/// eyes, nose and mouth, without the hair and background around them.
+const DETAIL_SPAN: f32 = 0.7;
+/// Live video: weight of the newest frame in the smoothed restoration amount, so it doesn't
+/// shimmer with frame-to-frame noise in the detail measurements.
+const AMOUNT_SMOOTHING: f32 = 0.25;
+/// A swapped face with at least this share of the original's detail is left unrestored. Video
+/// faces land around 0.87 (and look right without restoration; restored, they stand out), while
+/// large sharp faces come out of the 128–256 px swap models at 0.2–0.7.
+const DETAIL_TOLERANCE: f32 = 0.8;
+/// Restoration amounts below this are skipped, along with the restorer's inference.
+const MIN_AMOUNT: f32 = 0.02;
+
+/// How much GFPGAN detail each face gets: just enough to give the swapped face as much fine
+/// detail as the original face had in this frame. A small, soft or compressed face (most video)
+/// then gets none — restored detail would stand out from the frame like a sticker, and the
+/// restorer's inference (≈150 ms per face on a laptop GPU) is skipped — while a large, sharp
+/// face gets the full restoration.
+#[derive(Default)]
+struct Restoration {
+    /// Detail of each face before it was swapped.
+    original: Vec<f32>,
+    /// Live video: the smoothed amount per face.
+    amounts: Vec<f32>,
+    /// The face's region with the restored face pasted at full strength, to measure it.
+    trial: Frame,
+}
+
+impl Restoration {
+    /// Blend `needed` into face `index`'s smoothed amount (live) or take it as is.
+    fn settle(&mut self, index: usize, faces: usize, needed: f32, live: bool) -> f32 {
+        if !live {
+            return needed;
+        }
+        self.amounts.resize(faces, needed);
+        let amount = &mut self.amounts[index];
+        *amount = AMOUNT_SMOOTHING.mul_add(needed - *amount, *amount);
+        *amount
+    }
+}
+
+/// The square [`detail`] is measured in for `face`.
+fn detail_region(frame: &Frame, face: &Face) -> Option<Rect> {
+    let [x0, y0, x1, y1] = face.bbox;
+    Rect::square_around([f32::midpoint(x0, x1), f32::midpoint(y0, y1)], face.size() * DETAIL_SPAN, frame.width, frame.height)
 }
 
 /// Buffers for the final paste mask, reused every frame.
@@ -38,6 +97,8 @@ impl BoxMasks {
 struct PasteMask {
     mask: Vec<f32>,
     resampled: Vec<f32>,
+    /// A model mask moved from the swap's alignment into the enhancer's.
+    realigned: Vec<f32>,
 }
 
 /// Owns the models and per-stream state; call [`Processor::process`] once per frame.
@@ -55,9 +116,10 @@ pub struct Processor {
     reference: Option<Embedding>,
     smoother: FaceSmoother,
     tracker: FaceTracker,
-    box_masks: BoxMasks,
+    shape_masks: ShapeMasks,
     paste_mask: PasteMask,
     reuse: SwapReuse,
+    restoration: Restoration,
     /// Which faces of the frame are swapped afresh.
     fresh: Vec<bool>,
     /// A reused face's crop being pasted.
@@ -79,9 +141,10 @@ impl Processor {
             reference: None,
             smoother: FaceSmoother::default(),
             tracker: FaceTracker::default(),
-            box_masks: BoxMasks(VecDeque::with_capacity(MASK_CACHE)),
+            shape_masks: ShapeMasks(VecDeque::with_capacity(MASK_CACHE)),
             paste_mask: PasteMask::default(),
             reuse: SwapReuse::default(),
+            restoration: Restoration::default(),
             fresh: Vec::new(),
             reused_crop: Vec::new(),
             last_frame: None,
@@ -164,6 +227,13 @@ impl Processor {
 
             let swap_started = Instant::now();
             let size = pixel_boost::boosted_size(settings.swap_model.resolution(), settings.pixel_boost);
+            if settings.enhance {
+                self.restoration.original.clear();
+                self.restoration.original.extend(faces.iter().map(|f| detail_region(frame, f).map_or(0.0, |r| detail(frame, r))));
+            }
+            if faces.len() != self.restoration.amounts.len() {
+                self.restoration.amounts.clear();
+            }
             let budget = if live { settings.max_faces_per_frame } else { 0 };
             self.reuse.plan(&faces, budget, size, &mut self.fresh);
             for (index, face) in faces.iter().enumerate() {
@@ -179,11 +249,40 @@ impl Processor {
             if settings.enhance {
                 let enhance_started = Instant::now();
                 for (index, face) in faces.iter().enumerate() {
+                    let Some(region) = detail_region(frame, face) else { continue };
+                    let (original, swapped) = (self.restoration.original[index], detail(frame, region));
+                    // About as detailed as the original: no restoration, once a live fade-out ends.
+                    let settled = (swapped >= original * DETAIL_TOLERANCE).then(|| self.restoration.settle(index, faces.len(), 0.0, live));
+                    if settled.is_some_and(|amount| amount < MIN_AMOUNT) {
+                        stats.restorations_skipped += 1;
+                        continue;
+                    }
                     let crop = self.enhancer.as_mut().expect("prepared").enhance(frame, &face.landmarks)?;
-                    let PasteMask { mask, resampled } = &mut self.paste_mask;
-                    let box_mask = self.box_masks.get(crop.size, settings.mask_blur, [0.0; 4]);
-                    compose_into(box_mask, crop.size, self.masker.mask(index).map(|m| (m, MASK_SIZE)), mask, resampled);
-                    paste(frame, &crop, mask, settings.enhance_blend);
+                    let PasteMask { mask, resampled, realigned } = &mut self.paste_mask;
+                    // Model masks live in the swap's ArcFace alignment; GFPGAN works in FFHQ's.
+                    let model_mask = self.masker.mask(index).map(|m| {
+                        let to_swap_space = Template::Ffhq512
+                            .align(&face.landmarks, MASK_SIZE)
+                            .invert()
+                            .then(&Template::Arcface128.align(&face.landmarks, MASK_SIZE));
+                        warp_plane_into(m, MASK_SIZE, &to_swap_space, MASK_SIZE, 1.0, realigned);
+                        (realigned.as_slice(), MASK_SIZE)
+                    });
+                    let shape = self.shape_masks.get(Shape::Box, crop.size, settings.mask_blur, [0.0; 4]);
+                    compose_into(shape, crop.size, model_mask, mask, resampled);
+                    let amount = if let Some(amount) = settled {
+                        amount
+                    } else {
+                        // Detail of the fully restored face, from a trial paste into a copy of the region.
+                        let trial = &mut self.restoration.trial;
+                        frame.crop_into(region, trial);
+                        let to_crop = Affine([1.0, 0.0, region.x as f32, 0.0, 1.0, region.y as f32]).then(&crop.to_crop);
+                        paste_back(trial, &crop.pixels, mask, crop.size, &to_crop, 1.0);
+                        let restored = detail(trial, Rect::full(region.width, region.height));
+                        let needed = if restored > swapped { ((original - swapped) / (restored - swapped)).clamp(0.0, 1.0) } else { 0.0 };
+                        self.restoration.settle(index, faces.len(), needed, live)
+                    };
+                    paste(frame, &crop, mask, amount * settings.enhance_blend);
                 }
                 stats.enhance_ms = elapsed_ms(enhance_started);
             }
@@ -222,9 +321,9 @@ impl Processor {
 
         let mask_started = Instant::now();
         let model_mask = self.masker.face_mask(index, frame, target, &original, &face, live)?;
-        let PasteMask { mask, resampled } = &mut self.paste_mask;
-        let box_mask = self.box_masks.get(size, settings.mask_blur, settings.mask_padding);
-        compose_into(box_mask, size, model_mask.map(|m| (m, MASK_SIZE)), mask, resampled);
+        let PasteMask { mask, resampled, .. } = &mut self.paste_mask;
+        let shape = self.shape_masks.get(Shape::Face, size, settings.mask_blur, settings.mask_padding);
+        compose_into(shape, size, model_mask.map(|m| (m, MASK_SIZE)), mask, resampled);
         match_color(&mut face.pixels, &original, mask, settings.color_correction);
         stats.mask_ms += elapsed_ms(mask_started);
 

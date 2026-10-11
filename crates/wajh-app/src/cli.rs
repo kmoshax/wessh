@@ -29,8 +29,8 @@ pub struct Options {
     /// setup and the app's onboarding only install the default model.
     #[arg(long, global = true, value_enum, default_value_t, hide = true)]
     pub model: SwapModel,
-    /// Restore detail with GPEN after swapping; swap models output 128–256 px faces, which look
-    /// soft once scaled up to the face. Costs ≈10 ms per face on a GPU; turn off on CPU.
+    /// Restore detail with GFPGAN after swapping, as much as the original face had: large, sharp
+    /// faces get it, small or soft ones (most video) are left alone and cost nothing extra.
     #[arg(long, global = true, default_value_t = Settings::default().enhance, action = clap::ArgAction::Set)]
     pub enhance: bool,
     /// Swap every face instead of only the largest.

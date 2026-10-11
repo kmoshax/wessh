@@ -9,6 +9,8 @@ pub struct Stats {
     pub detect_ms: f32,
     pub swap_ms: f32,
     pub enhance_ms: f32,
+    /// Faces whose restoration was skipped: they already held as much detail as the original.
+    pub restorations_skipped: usize,
     /// Occlusion / region / mouth masks and colour correction (part of `swap_ms`).
     pub mask_ms: f32,
     /// Occluder inference and its mask (part of `mask_ms`).
@@ -38,6 +40,7 @@ impl AddAssign for Stats {
         self.detect_ms += rhs.detect_ms;
         self.swap_ms += rhs.swap_ms;
         self.enhance_ms += rhs.enhance_ms;
+        self.restorations_skipped += rhs.restorations_skipped;
         self.mask_ms += rhs.mask_ms;
         self.occlusion_ms += rhs.occlusion_ms;
         self.parser_ms += rhs.parser_ms;
@@ -58,6 +61,7 @@ impl Div<f32> for Stats {
             detect_ms: self.detect_ms / n,
             swap_ms: self.swap_ms / n,
             enhance_ms: self.enhance_ms / n,
+            restorations_skipped: (self.restorations_skipped as f32 / n).round() as usize,
             mask_ms: self.mask_ms / n,
             occlusion_ms: self.occlusion_ms / n,
             parser_ms: self.parser_ms / n,
@@ -81,13 +85,11 @@ impl std::fmt::Display for Stats {
         if let Some(rate) = self.mask_hit_rate() {
             write!(f, ", {:.0}% reused", rate * 100.0)?;
         }
-        write!(
-            f,
-            ") | enhance {:.2} ms | total {:.2} ms ({:.1} fps)",
-            self.enhance_ms,
-            self.total_ms,
-            1000.0 / self.total_ms.max(f32::EPSILON)
-        )
+        write!(f, ") | enhance {:.2} ms", self.enhance_ms)?;
+        if self.restorations_skipped > 0 {
+            write!(f, " ({} skipped)", self.restorations_skipped)?;
+        }
+        write!(f, " | total {:.2} ms ({:.1} fps)", self.total_ms, 1000.0 / self.total_ms.max(f32::EPSILON))
     }
 }
 

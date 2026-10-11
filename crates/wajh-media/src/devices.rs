@@ -240,7 +240,7 @@ mod tests {
     fn missing_module_is_reported() {
         let devices = classify_v4l2(&[node("video0", "Cam", Some(0), Some("uvcvideo"), false)], false);
         assert_eq!(devices.loopback, LoopbackStatus::NotLoaded);
-        assert!(devices.outputs.is_empty());
+        assert_eq!(devices.outputs.len(), 0);
     }
 
     #[test]

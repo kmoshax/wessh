@@ -1,5 +1,5 @@
-use super::Frame;
 use super::sample::Bgr;
+use super::{Frame, sample};
 use crate::geometry::Affine;
 use rayon::prelude::*;
 
@@ -54,6 +54,17 @@ pub fn warp_crop_into(frame: &Frame, to_crop: &Affine, size: usize, out: &mut [u
             *pixel = acc.map(|a| (a * weight + 0.5) as u8);
         }
     });
+}
+
+/// Resample a square `f32` plane into another aligned space: `out[v][u] = src(to_src(u, v))`,
+/// bilinear, with `outside` wherever `to_src` falls off the source plane.
+pub fn warp_plane_into(src: &[f32], src_size: usize, to_src: &Affine, size: usize, outside: f32, out: &mut Vec<f32>) {
+    let limit = (src_size - 1) as f32;
+    out.clear();
+    out.extend((0..size * size).map(|i| {
+        let [x, y] = to_src.apply([(i % size) as f32, (i / size) as f32]);
+        if (0.0..=limit).contains(&x) && (0.0..=limit).contains(&y) { sample::bilinear_plane(src, src_size, x, y) } else { outside }
+    }));
 }
 
 #[cfg(test)]
