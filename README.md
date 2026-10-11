@@ -15,12 +15,12 @@
     </td>
     <td width="30%" align="center">
       <img src="docs/assets/mrbeast.png" width="203" alt="MrBeast source portrait used for the demo">
-      <br><sub>Source face · MrBeast</sub>
+      <br><sub>Source face - MrBeast</sub>
     </td>
   </tr>
 </table>
 
-_12 clips · Edited footage · [Sources & credits](docs/demo-sources.md)_
+_12 clips - Edited footage - [Sources & credits](docs/demo-sources.md)_
 
 ## Quick start
 
