@@ -10,6 +10,7 @@ mod sheet;
 use crate::live::{Image, LiveSession, Phase, Snapshot};
 use crate::ui::components::Snackbar;
 use crate::ui::file_picker::{Dialog, FilePicker, Intake};
+use crate::ui::model_tools::ModelTools;
 use crate::ui::task::Task;
 use eframe::egui::{self, ColorImage, Context, Rect, TextureHandle, TextureOptions, Ui};
 use sections::Section;
@@ -127,6 +128,7 @@ pub struct LiveScreen {
     loopback_missing: bool,
     /// Modal side sheet open (compact layouts only).
     sheet_open: bool,
+    model_tools: ModelTools,
 }
 
 impl LiveScreen {
@@ -244,12 +246,19 @@ impl LiveScreen {
 
         let actions = std::mem::take(&mut frame.actions);
         if settings != session.settings() {
-            session.set_settings(settings);
+            if wessh_core::assets::required(&settings).iter().all(wessh_core::assets::Asset::is_downloaded) {
+                session.set_settings(settings);
+            } else {
+                self.model_tools.request(ui.ctx(), settings);
+            }
         }
         for action in actions {
             self.run(ui.ctx(), session, snapshot, action);
         }
         self.snackbar.ui(ui, content_rect);
+        if let Some(settings) = self.model_tools.ui(ui.ctx()) {
+            session.set_settings(settings);
+        }
     }
 
     /// Start or stop the camera.

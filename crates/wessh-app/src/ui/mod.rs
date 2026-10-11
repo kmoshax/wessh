@@ -10,6 +10,7 @@ mod capture;
 mod components;
 mod file_picker;
 mod icons;
+mod model_tools;
 mod screens;
 mod task;
 mod theme;

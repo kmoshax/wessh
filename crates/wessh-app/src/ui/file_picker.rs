@@ -155,7 +155,7 @@ pub fn reveal(path: &Path) {
         "windows" => "explorer",
         _ => "xdg-open",
     };
-    let _ = Command::new(program).arg(folder).spawn();
+    let _ = wessh_core::process::background_command(program).arg(folder).spawn();
 }
 
 fn program_exists(name: &str) -> bool {

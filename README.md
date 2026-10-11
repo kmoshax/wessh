@@ -41,7 +41,7 @@ Download from [Releases](https://github.com/kmoshax/wessh/releases), then open:
 - **Windows:** setup EXE — install and open from the Start menu.
 - **macOS:** DMG — drag wessh into Applications.
 
-First launch sets up your runtime and models. Downloads happen once and can resume.
+First launch installs your runtime and models for enabled features. Optional masks download when you enable them; TensorRT is opt-in. Downloads happen once and can resume.
 
 ## Features
 
@@ -73,8 +73,8 @@ wessh video -s me.jpg -t clip.mp4 -o out.mp4
 wessh cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
 wessh cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
 wessh bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
-wessh models                                       # download the curated models
-wessh setup                                        # install runtime, CUDA / TensorRT libraries, models
+wessh models                                       # download models for enabled features
+wessh setup                                        # install runtime, CUDA libraries and enabled models
 wessh doctor                                       # diagnose the installation
 ```
 
@@ -94,7 +94,8 @@ Global options:
 | -------------------------------- | -------------------------------------------------------------------- |
 | `--dry-run`                      | print the plan with download sizes, change nothing                   |
 | `--flavour cpu\|cuda12\|cuda13\|coreml` | override the detected runtime build                            |
-| `--no-tensorrt`                  | skip TensorRT on NVIDIA (saves a 3.7 GB download; fastest backend)   |
+| `--tensorrt`                     | add optional TensorRT acceleration on NVIDIA (several GB)           |
+| `--no-tensorrt`                  | skip TensorRT even with `--device tensorrt`                         |
 | `--force`                        | reinstall components that are already present                       |
 | `--no-models`                    | skip the models (the app downloads them on first start)              |
 | `--ort-version <x.y.z>`          | ONNX Runtime release to install (default: the tested one)            |

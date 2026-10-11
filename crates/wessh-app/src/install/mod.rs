@@ -259,7 +259,7 @@ impl Plan {
 }
 
 /// Friendly name of a curated model.
-fn model_label(asset: &Asset) -> String {
+pub(crate) fn model_label(asset: &Asset) -> String {
     let role = if *asset == assets::DETECTOR {
         "Face detector"
     } else if *asset == assets::RECOGNIZER {
@@ -522,7 +522,7 @@ mod tests {
             tensorrt,
             ort_version: sources::ORT_VERSION.to_owned(),
             force: true,
-            models: assets::required(&Settings::default()).to_vec(),
+            models: assets::required(&Settings::default()),
             external_runtime: false,
             ffmpeg: false,
         }

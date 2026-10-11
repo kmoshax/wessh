@@ -7,6 +7,7 @@ pub mod face;
 pub mod geometry;
 pub mod image;
 pub mod pipeline;
+pub mod process;
 pub mod runtime;
 
 pub use error::{Error, Result};

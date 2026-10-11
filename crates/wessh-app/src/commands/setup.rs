@@ -1,7 +1,7 @@
 //! `wessh setup`: one command that makes a machine ready to run wessh.
 //!
 //! Installs the ONNX Runtime build for the GPU and driver into `<data dir>/ort/lib`, NVIDIA's
-//! CUDA / cuDNN / TensorRT libraries into `<data dir>/ort/lib/cuda`, and the curated models into
+//! CUDA / cuDNN libraries (optionally TensorRT) into `<data dir>/ort/lib/cuda`, and enabled models into
 //! `<data dir>/models` — the same set the app's onboarding installs (see [`crate::install`]).
 //! Every step is skipped when already done, downloads resume, and checksums are verified
 //! whenever the source publishes one.
@@ -16,10 +16,10 @@ use wessh_core::assets::{self, data_dir};
 pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
     let host = Host::detect(args.flavour)?;
     let request = Request {
-        tensorrt: !args.no_tensorrt,
+        tensorrt: !args.no_tensorrt && (args.tensorrt || options.device == wessh_core::Device::Tensorrt),
         ort_version: args.ort_version.clone(),
         force: args.force,
-        models: if args.no_models { Vec::new() } else { assets::required(&options.settings()).to_vec() },
+        models: if args.no_models { Vec::new() } else { assets::required(&options.settings()) },
         external_runtime: false,
         ffmpeg: true,
     };

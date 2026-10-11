@@ -36,7 +36,7 @@ pub struct Download {
 }
 
 fn curl() -> Command {
-    let mut cmd = Command::new("curl");
+    let mut cmd = wessh_core::process::background_command("curl");
     cmd.args([
         "--fail",
         "--location",

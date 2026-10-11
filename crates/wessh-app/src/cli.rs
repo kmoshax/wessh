@@ -25,8 +25,7 @@ pub struct Options {
     /// Inference backend.
     #[arg(long, global = true, value_enum, default_value_t)]
     pub device: Device,
-    /// Face swap model. Developer / benchmarking option: wessh ships one curated model set, and
-    /// setup and the app's onboarding only install the default model.
+    /// Face swap model. Developer / benchmarking option: setup installs only the selected model.
     #[arg(long, global = true, value_enum, default_value_t, hide = true)]
     pub model: SwapModel,
     /// Restore detail with GFPGAN after swapping, as much as the original face had: large, sharp
@@ -151,7 +150,7 @@ pub enum Command {
         #[arg(long)]
         motion: bool,
     },
-    /// Download the curated models (what the app's onboarding installs).
+    /// Download models for the enabled features (what the app's onboarding installs).
     Models,
     /// Install the ONNX Runtime build for this GPU, its CUDA (and TensorRT) libraries and the models.
     Setup(SetupArgs),
@@ -167,8 +166,10 @@ pub struct SetupArgs {
     /// Runtime build to install [default: chosen from the GPU and driver].
     #[arg(long, value_enum)]
     pub flavour: Option<Flavour>,
-    /// Skip TensorRT, which is otherwise installed on NVIDIA GPUs (a 3.5 GB download; the
-    /// fastest backend). The app will offer to download it later.
+    /// Include optional TensorRT libraries on NVIDIA GPUs (several GB).
+    #[arg(long, conflicts_with = "no_tensorrt")]
+    pub tensorrt: bool,
+    /// Skip TensorRT even when --device tensorrt is set (accepted for compatibility).
     #[arg(long)]
     pub no_tensorrt: bool,
     /// ONNX Runtime release to install.

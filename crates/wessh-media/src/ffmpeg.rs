@@ -30,7 +30,7 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
 
 /// [`find_ffmpeg`] without any arguments (plain `ffmpeg` when there is none, so the error names it).
 pub fn ffmpeg_program() -> Command {
-    Command::new(find_ffmpeg().as_deref().unwrap_or(Path::new(EXE)))
+    wessh_core::process::background_command(find_ffmpeg().as_deref().unwrap_or(Path::new(EXE)))
 }
 
 /// [`ffmpeg_program`] with quiet, non-interactive defaults.

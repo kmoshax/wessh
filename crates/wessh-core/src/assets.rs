@@ -1,8 +1,8 @@
 //! Model registry and first-run downloads.
 
+use crate::process::background_command;
 use crate::{Error, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// A downloadable ONNX model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,13 +139,21 @@ impl SwapModel {
     }
 }
 
-/// The curated model set: every model the pipeline can use with `settings`, whichever of its
-/// features are switched on. This is exactly what first-run setup downloads, so toggling a
-/// feature never triggers a download. With default settings the swap model is
-/// [`SwapModel::default()`] and the occluder [`OccluderModel::default()`].
+/// Models needed by the enabled features. Disabled enhancement and masks are downloaded only
+/// when requested; the parser is shared by region and mouth masks.
 #[must_use]
-pub fn required(settings: &crate::Settings) -> [Asset; 6] {
-    [DETECTOR, RECOGNIZER, settings.swap_model.asset(), ENHANCER, settings.occluder_model.asset(), crate::face::masker::PARSER_ASSET]
+pub fn required(settings: &crate::Settings) -> Vec<Asset> {
+    let mut models = vec![DETECTOR, RECOGNIZER, settings.swap_model.asset()];
+    if settings.enhance {
+        models.push(ENHANCER);
+    }
+    if settings.occlusion {
+        models.push(settings.occluder_model.asset());
+    }
+    if settings.region_mask || settings.mouth_mask {
+        models.push(crate::face::masker::PARSER_ASSET);
+    }
+    models
 }
 
 /// Root of wessh's per-user data (`$WESSH_HOME`, or the platform data dir).
@@ -186,7 +194,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let partial = dest.with_extension("part");
-    let status = Command::new("curl")
+    let status = background_command("curl")
         .args(["-fL", "--retry", "5", "-C", "-", "--progress-bar", "-o"])
         .arg(&partial)
         .arg(url)
@@ -197,4 +205,36 @@ fn download(url: &str, dest: &Path) -> Result<()> {
     }
     std::fs::rename(&partial, dest)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Settings;
+
+    #[test]
+    fn default_downloads_skip_disabled_masks() {
+        assert_eq!(required(&Settings::default()), [DETECTOR, RECOGNIZER, SwapModel::Inswapper.asset(), ENHANCER]);
+        let settings = Settings { enhance: false, ..Settings::default() };
+        assert_eq!(required(&settings), [DETECTOR, RECOGNIZER, SwapModel::Inswapper.asset()]);
+    }
+
+    #[test]
+    fn optional_models_follow_settings_without_duplicate_parser() {
+        let settings = Settings {
+            enhance: false,
+            swap_model: SwapModel::Hyperswap1c,
+            occlusion: true,
+            occluder_model: OccluderModel::Xseg3,
+            region_mask: true,
+            mouth_mask: true,
+            ..Settings::default()
+        };
+        assert_eq!(
+            required(&settings),
+            [DETECTOR, RECOGNIZER, SwapModel::Hyperswap1c.asset(), OccluderModel::Xseg3.asset(), crate::face::masker::PARSER_ASSET]
+        );
+        let mouth_only = Settings { mouth_mask: true, enhance: false, ..Settings::default() };
+        assert!(required(&mouth_only).contains(&crate::face::masker::PARSER_ASSET));
+    }
 }

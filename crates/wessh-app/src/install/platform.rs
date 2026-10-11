@@ -2,7 +2,6 @@
 
 use anyhow::{Result, bail};
 use std::fmt;
-use std::process::Command;
 
 /// Oldest NVIDIA driver branch that runs CUDA 13 user-space libraries (R580).
 const CUDA13_MIN_DRIVER: u32 = 580;
@@ -268,7 +267,7 @@ pub fn ffmpeg_version() -> Option<String> {
 
 /// Stdout of a successful command, `None` if it is missing or fails.
 pub fn run_stdout(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
+    let output = wessh_core::process::background_command(program).args(args).output().ok()?;
     output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

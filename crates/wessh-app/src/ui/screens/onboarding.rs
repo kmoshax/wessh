@@ -1,8 +1,8 @@
 //! First-run onboarding: shown instead of the app while the runtime or a curated model is
 //! missing. Welcome → Getting ready (download everything, with pause / resume / retry) → Done.
 //!
-//! Nothing is chosen here: the hardware is detected, TensorRT is included on NVIDIA GPUs and the
-//! models are the curated set ([`wessh_core::assets::required`]). The engine is only initialised
+//! Hardware is detected; only enabled models and the runtime are installed. TensorRT is
+//! included only when explicitly requested. The engine is only initialised
 //! once this flow has finished.
 
 use super::layout::{centered, column};
@@ -34,6 +34,26 @@ const STEP_DOT: f32 = 24.0;
 const STEP_CONNECTOR: f32 = 40.0;
 const STEP_LABELS: [&str; 3] = ["Welcome", "Download", "Ready"];
 const PERCENT: f32 = 100.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn automatic_onboarding_does_not_require_tensorrt_or_disabled_masks() {
+        let cli = Cli::parse_from(["wessh"]);
+        let request = request(&cli.options);
+        assert!(!request.tensorrt);
+        assert!(!request.ffmpeg);
+        assert_eq!(request.models.len(), 4);
+        assert!(!request.models.contains(&assets::OccluderModel::default().asset()));
+        assert!(!request.models.contains(&wessh_core::face::masker::PARSER_ASSET));
+        let cli = Cli::parse_from(["wessh", "--device", "tensorrt"]);
+        assert!(super::request(&cli.options).tensorrt);
+    }
+}
 
 /// A page of the flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,15 +138,15 @@ pub struct Onboarding {
 }
 
 /// What onboarding installs for these options: the detected runtime (CPU only with
-/// `--device cpu`), TensorRT on NVIDIA unless the device rules it out, and the curated models.
+/// `--device cpu`), explicitly requested TensorRT, and models for enabled features.
 fn request(options: &Options) -> Request {
     let runtime = locate::runtime_library(options.ort.as_deref()).ok();
     let external_runtime = runtime.is_some_and(|path| path.parent() != Some(locate::default_runtime_dir().as_path()));
     Request {
-        tensorrt: matches!(options.device, Device::Auto | Device::Tensorrt),
+        tensorrt: options.device == Device::Tensorrt,
         ort_version: sources::ORT_VERSION.to_owned(),
         force: false,
-        models: assets::required(&options.settings()).to_vec(),
+        models: assets::required(&options.settings()),
         external_runtime,
         ffmpeg: false,
     }
@@ -388,7 +408,7 @@ impl Onboarding {
             }
             if self.has(Kind::Model) {
                 let count = self.shown.iter().filter(|&&i| self.rows[i].kind == Kind::Model).count();
-                let detail = format!("{count} models for detection, swapping, enhancement and masks");
+                let detail = format!("{count} models for the enabled features");
                 summary_row(ui, icons::FACE, "Face models", &detail, &size(self.size_of(&[Kind::Model])));
             }
             ui.add_space(spacing::SM);
