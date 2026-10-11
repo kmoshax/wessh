@@ -8,7 +8,7 @@
 > [!CAUTION]
 > **Educational and experimental project.** Provided as is, without warranties. Use media with permission and the consent of the people depicted. Do not use it for deception, harassment or non-consensual content. You are responsible for your use and outputs; third-party models have their own terms.
 
-### MrBeast
+## Demos
 
 <table>
   <tr>
@@ -20,14 +20,6 @@
       <br><sub>Source face - MrBeast</sub>
     </td>
   </tr>
-</table>
-
-_12 clips - Edited footage - [Sources & credits](docs/demo-sources.md)_
-
-<details>
-<summary>Adolf Hitler</summary>
-
-<table>
   <tr>
     <td width="70%" align="center">
       <img src="docs/assets/demo-hitler.gif" width="480" alt="Adolf Hitler face-swap demo — twelve edited clips">
@@ -40,8 +32,6 @@ _12 clips - Edited footage - [Sources & credits](docs/demo-sources.md)_
 </table>
 
 _12 clips - Edited footage - [Sources & credits](docs/demo-sources.md)_
-
-</details>
 
 ## Quick start
 
