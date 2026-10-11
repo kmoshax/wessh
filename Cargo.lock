@@ -2697,49 +2697,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "wajh"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "clap",
- "crossbeam-channel",
- "eframe",
- "flate2",
- "image",
- "ort",
- "parking_lot",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "thiserror 2.0.21",
- "wajh-core",
- "wajh-media",
- "zip",
-]
-
-[[package]]
-name = "wajh-core"
-version = "0.2.0"
-dependencies = [
- "clap",
- "dirs",
- "image",
- "ort",
- "rayon",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "wajh-media"
-version = "0.2.0"
-dependencies = [
- "parking_lot",
- "thiserror 2.0.21",
- "wajh-core",
-]
-
-[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2990,6 +2947,49 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
+
+[[package]]
+name = "weshy"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossbeam-channel",
+ "eframe",
+ "flate2",
+ "image",
+ "ort",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "thiserror 2.0.21",
+ "weshy-core",
+ "weshy-media",
+ "zip",
+]
+
+[[package]]
+name = "weshy-core"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "dirs",
+ "image",
+ "ort",
+ "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "weshy-media"
+version = "0.2.0"
+dependencies = [
+ "parking_lot",
+ "thiserror 2.0.21",
+ "weshy-core",
+]
 
 [[package]]
 name = "wgpu"

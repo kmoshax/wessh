@@ -1,6 +1,6 @@
-# Contributing to wajh
+# Contributing to weshy
 
-Thanks for helping. wajh aims to be the fastest and easiest-to-install face swapper, so
+Thanks for helping. weshy aims to be the fastest and easiest-to-install face swapper, so
 changes are judged on two things above all: latency and install friction.
 
 ## Getting started
@@ -8,12 +8,12 @@ changes are judged on two things above all: latency and install friction.
 You need a recent stable Rust (edition 2024), `curl`, and `ffmpeg` on `PATH`.
 
 ```sh
-git clone https://github.com/kmosha/wajh && cd wajh
+git clone https://github.com/kmoshax/weshy && cd weshy
 cargo build
 # Runtime, CUDA libraries and models into a throwaway data dir, leaving your own install alone:
-WAJH_HOME=/tmp/wajh-dev cargo run -- setup
-WAJH_HOME=/tmp/wajh-dev cargo run -- doctor
-WAJH_HOME=/tmp/wajh-dev cargo run --release            # the app
+WESHY_HOME=/tmp/weshy-dev cargo run -- setup
+WESHY_HOME=/tmp/weshy-dev cargo run -- doctor
+WESHY_HOME=/tmp/weshy-dev cargo run --release            # the app
 ```
 
 `cargo run -- setup --dry-run` shows what would be downloaded without touching anything.
@@ -37,8 +37,8 @@ cargo test --workspace --locked
 
 ## Code conventions
 
-- Libraries (`wajh-core`, `wajh-media`) return typed errors (`thiserror`); the binary
-  (`wajh-app`) uses `anyhow` and adds context.
+- Libraries (`weshy-core`, `weshy-media`) return typed errors (`thiserror`); the binary
+  (`weshy-app`) uses `anyhow` and adds context.
 - No magic numbers: name constants and say where they come from (a model's input size, a
   driver version, a protocol limit).
 - No `unsafe` (the workspace forbids it).
@@ -51,13 +51,13 @@ See [CLAUDE.md](CLAUDE.md) for the architecture and crate boundaries.
 
 ## Benchmarks
 
-`wajh bench` runs the full pipeline on one image and prints per-stage timings averaged over
+`weshy bench` runs the full pipeline on one image and prints per-stage timings averaged over
 `-n` iterations, after a warm-up:
 
 ```sh
 cargo build --release
-./target/release/wajh bench -s source.jpg -t target.jpg -n 200 --device cuda
-./target/release/wajh bench -s source.jpg -t target.jpg -n 200 --device cpu --detector-size 320
+./target/release/weshy bench -s source.jpg -t target.jpg -n 200 --device cuda
+./target/release/weshy bench -s source.jpg -t target.jpg -n 200 --device cpu --detector-size 320
 ```
 
 When a change touches the pipeline, include before/after numbers (device, GPU/CPU model,
@@ -72,5 +72,5 @@ arm64, Windows x86-64 and macOS arm64 / x86-64 archives with `scripts/package.sh
 them with a `SHA256SUMS` file to a draft GitHub release, and leaves it for review. Bump
 `version` in the root `Cargo.toml` first.
 
-`sources::ORT_VERSION` in `crates/wajh-app/src/commands/setup/sources.rs` pins the ONNX Runtime
-release `wajh setup` installs; update it together with the `ort` crate.
+`sources::ORT_VERSION` in `crates/weshy-app/src/commands/setup/sources.rs` pins the ONNX Runtime
+release `weshy setup` installs; update it together with the `ort` crate.

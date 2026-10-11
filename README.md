@@ -1,41 +1,41 @@
-# wajh
+# weshy
 
-Real-time face swap in Rust. A lighter, faster take on Deep-Live-Cam: one native binary,
+*weshy* (وشّي) is Egyptian Arabic for "my face". Real-time face swap in Rust. A lighter, faster take on Deep-Live-Cam: one native binary,
 no Python, no PyTorch and no multi-gigabyte environment to build.
 
 ## Quick start
 
 1. **Download** the archive for your platform from
-   [Releases](https://github.com/kmosha/wajh/releases) and unpack it, or use the installer:
+   [Releases](https://github.com/kmoshax/weshy/releases) and unpack it, or use the installer:
 
    ```sh
    # Linux / macOS
-   curl -fsSL https://raw.githubusercontent.com/kmosha/wajh/main/scripts/install.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/kmoshax/weshy/main/scripts/install.sh | sh
    ```
 
    ```powershell
    # Windows
-   irm https://raw.githubusercontent.com/kmosha/wajh/main/scripts/install.ps1 | iex
+   irm https://raw.githubusercontent.com/kmoshax/weshy/main/scripts/install.ps1 | iex
    ```
 
-2. **Set up** the machine. `wajh setup` detects your GPU and driver, installs the matching
+2. **Set up** the machine. `weshy setup` detects your GPU and driver, installs the matching
    ONNX Runtime build, the CUDA / cuDNN and TensorRT libraries it needs (NVIDIA only, no CUDA
-   toolkit install required) and wajh's curated models. Starting the app without it works too:
+   toolkit install required) and weshy's curated models. Starting the app without it works too:
    a first-run screen downloads the same things, with pause and resume:
 
    ```sh
-   wajh setup --dry-run   # optional: see what would be downloaded, and how much
-   wajh setup
+   weshy setup --dry-run   # optional: see what would be downloaded, and how much
+   weshy setup
    ```
 
 3. **Run** it:
 
    ```sh
-   wajh
+   weshy
    ```
 
-If anything misbehaves, `wajh doctor` reports what is installed and prints the exact command
-that fixes each problem. The only thing `wajh setup` can't install for you is ffmpeg (used for
+If anything misbehaves, `weshy doctor` reports what is installed and prints the exact command
+that fixes each problem. The only thing `weshy setup` can't install for you is ffmpeg (used for
 the camera and video modes); it prints the command for your OS if ffmpeg is missing.
 
 ## Features
@@ -59,11 +59,11 @@ the camera and video modes); it prints the command for your OS if ffmpeg is miss
 - ONNX Runtime is loaded dynamically: the binary stays small, and CUDA / TensorRT are a drop-in.
 - Source embeddings, feather masks and inswapper's embedding map are computed once and cached.
 
-## wajh vs Deep-Live-Cam
+## weshy vs Deep-Live-Cam
 
-|                           | wajh                                        | Deep-Live-Cam                                                     |
+|                           | weshy                                        | Deep-Live-Cam                                                     |
 | ------------------------- | ------------------------------------------- | ----------------------------------------------------------------- |
-| Install steps             | download, `wajh setup`, run                 | Python 3.10 + git + ffmpeg + (Windows) VS build tools, clone, venv, `pip install`, download models by hand, CUDA toolkit + cuDNN for GPU |
+| Install steps             | download, `weshy setup`, run                 | Python 3.10 + git + ffmpeg + (Windows) VS build tools, clone, venv, `pip install`, download models by hand, CUDA toolkit + cuDNN for GPU |
 | Application download      | ≈ 3.5 MB archive (7 MB binary, Linux x86-64) | TODO (clone + `pip install`)                                      |
 | Runtime + models, CPU     | ≈ 460 MB (ONNX Runtime 24 MB + models)      | TODO GB                                                           |
 | Runtime + models, NVIDIA  | ≈ 1.9 GB download, ≈ 2.8 GB on disk         | TODO GB                                                           |
@@ -71,23 +71,23 @@ the camera and video modes); it prints the command for your OS if ffmpeg is miss
 | Live latency, NVIDIA GPU  | TODO ms / frame                             | TODO ms / frame                                                   |
 | System-wide changes       | none (one data directory)                   | Python packages, CUDA toolkit                                     |
 
-Latency is measured with `wajh bench` (per-stage timings) on the same machine and source/target
+Latency is measured with `weshy bench` (per-stage timings) on the same machine and source/target
 images; see [CONTRIBUTING.md](CONTRIBUTING.md#benchmarks).
 
 ## Commands
 
-Run `wajh <command> --help` for every option.
+Run `weshy <command> --help` for every option.
 
 ```sh
-wajh                                              # desktop app
-wajh image -s me.jpg -t photo.jpg -o out.jpg      # swap faces in an image
-wajh video -s me.jpg -t clip.mp4 -o out.mp4
-wajh cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
-wajh cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
-wajh bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
-wajh models                                       # download the curated models
-wajh setup                                        # install runtime, CUDA / TensorRT libraries, models
-wajh doctor                                       # diagnose the installation
+weshy                                              # desktop app
+weshy image -s me.jpg -t photo.jpg -o out.jpg      # swap faces in an image
+weshy video -s me.jpg -t clip.mp4 -o out.mp4
+weshy cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
+weshy cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
+weshy bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
+weshy models                                       # download the curated models
+weshy setup                                        # install runtime, CUDA / TensorRT libraries, models
+weshy doctor                                       # diagnose the installation
 ```
 
 Global options:
@@ -100,7 +100,7 @@ Global options:
 | `--detector-size 320\|480\|640`                          | detector input; smaller is faster                |
 | `--ort <path>`                                          | use a specific ONNX Runtime library              |
 
-`wajh setup` options:
+`weshy setup` options:
 
 | Option                           | Meaning                                                              |
 | -------------------------------- | -------------------------------------------------------------------- |
@@ -128,9 +128,9 @@ toolkit is needed — only the NVIDIA driver.
 
 ## Files and environment
 
-Everything wajh downloads lives in one directory: `$WAJH_HOME`, or by default
-`~/.local/share/wajh` (Linux), `~/Library/Application Support/wajh` (macOS),
-`%LOCALAPPDATA%\wajh` (Windows).
+Everything weshy downloads lives in one directory: `$WESHY_HOME`, or by default
+`~/.local/share/weshy` (Linux), `~/Library/Application Support/weshy` (macOS),
+`%LOCALAPPDATA%\weshy` (Windows).
 
 ```text
 <data dir>/ort/lib/          ONNX Runtime and its provider plugins
@@ -141,40 +141,40 @@ Everything wajh downloads lives in one directory: `$WAJH_HOME`, or by default
 
 Uninstalling is deleting that directory and the binary.
 
-wajh looks for ONNX Runtime in this order: `--ort <path>`, `ORT_DYLIB_PATH`, next to the
+weshy looks for ONNX Runtime in this order: `--ort <path>`, `ORT_DYLIB_PATH`, next to the
 executable (also `./ort/lib` and `./lib`), then `<data dir>/ort/lib`.
 
 | Variable                         | Effect                                                   |
 | -------------------------------- | -------------------------------------------------------- |
-| `WAJH_HOME`                      | data directory                                           |
+| `WESHY_HOME`                      | data directory                                           |
 | `ORT_DYLIB_PATH`                 | ONNX Runtime library to load                             |
-| `WAJH_CUDA_DIR`                  | directory of CUDA libraries to preload                   |
-| `WAJH_THREADS`                   | CPU inference threads (default: one per physical core)   |
-| `WAJH_FFMPEG`, `WAJH_FFPROBE`    | ffmpeg / ffprobe executables                             |
+| `WESHY_CUDA_DIR`                  | directory of CUDA libraries to preload                   |
+| `WESHY_THREADS`                   | CPU inference threads (default: one per physical core)   |
+| `WESHY_FFMPEG`, `WESHY_FFPROBE`    | ffmpeg / ffprobe executables                             |
 
 ### Virtual camera on Linux
 
 ```sh
-sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="wajh" exclusive_caps=1
-wajh cam -s me.jpg --out /dev/video10
+sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="weshy" exclusive_caps=1
+weshy cam -s me.jpg --out /dev/video10
 ```
 
-`wajh doctor` tells you whether the module is installed and loaded.
+`weshy doctor` tells you whether the module is installed and loaded.
 
 ## Platform notes
 
 - **Intel Macs**: Microsoft no longer publishes ONNX Runtime for macOS x86-64. Install it with
   `brew install onnxruntime` and pass `--ort "$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"`.
 - **Windows without NVIDIA**: runs on the CPU. DirectML builds of ONNX Runtime stop at 1.24,
-  older than the 1.28 wajh needs.
+  older than the 1.28 weshy needs.
 - **Linux arm64 with NVIDIA** (Jetson and similar): ONNX Runtime publishes no GPU build, so
-  `wajh setup` installs the CPU one; point `--ort` at a JetPack build to use the GPU.
+  `weshy setup` installs the CPU one; point `--ort` at a JetPack build to use the GPU.
 
 ## Building from source
 
 ```sh
 cargo build --release
-./target/release/wajh setup
+./target/release/weshy setup
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.

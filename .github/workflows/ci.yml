@@ -48,4 +48,4 @@ jobs:
         shell: bash
         run: cargo run --locked -- setup --dry-run
         env:
-          WAJH_HOME: ${{ runner.temp }}/wajh
+          WESHY_HOME: ${{ runner.temp }}/weshy

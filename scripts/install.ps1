@@ -1,24 +1,24 @@
-# Install the latest wajh release and prepare the machine (Windows x64).
+# Install the latest weshy release and prepare the machine (Windows x64).
 #
-#   irm https://raw.githubusercontent.com/kmosha/wajh/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/kmoshax/weshy/main/scripts/install.ps1 | iex
 #
-# Environment: WAJH_VERSION (tag, default latest), WAJH_INSTALL_DIR
-# (default %LOCALAPPDATA%\Programs\wajh), WAJH_SKIP_SETUP=1 to only install the binary.
+# Environment: WESHY_VERSION (tag, default latest), WESHY_INSTALL_DIR
+# (default %LOCALAPPDATA%\Programs\weshy), WESHY_SKIP_SETUP=1 to only install the binary.
 $ErrorActionPreference = 'Stop'
-$repo = 'kmosha/wajh'
+$repo = 'kmoshax/weshy'
 $target = 'x86_64-pc-windows-msvc'
 
-$tag = $env:WAJH_VERSION
+$tag = $env:WESHY_VERSION
 if (-not $tag) { $tag = (Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest").tag_name }
-$dir = $env:WAJH_INSTALL_DIR
-if (-not $dir) { $dir = Join-Path $env:LOCALAPPDATA 'Programs\wajh' }
-$name = "wajh-$tag-$target"
+$dir = $env:WESHY_INSTALL_DIR
+if (-not $dir) { $dir = Join-Path $env:LOCALAPPDATA 'Programs\weshy' }
+$name = "weshy-$tag-$target"
 $base = "https://github.com/$repo/releases/download/$tag"
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
-    Write-Host "downloading wajh $tag for $target"
+    Write-Host "downloading weshy $tag for $target"
     Invoke-WebRequest "$base/$name.zip" -OutFile "$tmp\$name.zip"
     Invoke-WebRequest "$base/SHA256SUMS" -OutFile "$tmp\SHA256SUMS"
     $expected = (Select-String -Path "$tmp\SHA256SUMS" -Pattern " $name.zip$").Line.Split(' ')[0]
@@ -30,7 +30,7 @@ try {
 } finally {
     Remove-Item -Recurse -Force $tmp
 }
-Write-Host "installed $dir\wajh.exe"
+Write-Host "installed $dir\weshy.exe"
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -notcontains $dir) {
@@ -38,4 +38,4 @@ if (($userPath -split ';') -notcontains $dir) {
     Write-Host "added $dir to your user PATH (open a new terminal to use it)"
 }
 
-if ($env:WAJH_SKIP_SETUP -ne '1') { & "$dir\wajh.exe" setup @args }
+if ($env:WESHY_SKIP_SETUP -ne '1') { & "$dir\weshy.exe" setup @args }

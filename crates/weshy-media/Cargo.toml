@@ -1,0 +1,14 @@
+[package]
+name = "weshy-media"
+description = "ffmpeg-backed capture, virtual camera and video file I/O"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+weshy-core.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "weshy-core"
+description = "Face detection, recognition, swapping and enhancement pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ort.workspace = true
+image.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+clap = { workspace = true, optional = true }
+
+[features]
+clap = ["dep:clap"]
+
+[lints]
+workspace = true

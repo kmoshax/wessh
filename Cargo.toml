@@ -6,11 +6,11 @@ members = ["crates/*"]
 version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/kmosha/wajh"
+repository = "https://github.com/kmoshax/weshy"
 
 [workspace.dependencies]
-wajh-core = { path = "crates/wajh-core" }
-wajh-media = { path = "crates/wajh-media" }
+weshy-core = { path = "crates/weshy-core" }
+weshy-media = { path = "crates/weshy-media" }
 # ONNX Runtime is loaded at runtime, so the binary stays small and GPU support is a drop-in.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-28", "cuda", "tensorrt", "coreml", "lax-feature-matching"] }
 eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
