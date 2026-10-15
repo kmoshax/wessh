@@ -1,3 +1,4 @@
+use super::async_enhance::{self, AsyncEnhance, SharedEnhancer};
 use super::async_swap::{self, AsyncSwap, SharedSwapper};
 use super::flow::LandmarkFlow;
 use super::pixel_boost::{self, Swapped};
@@ -131,7 +132,9 @@ pub struct Processor {
     swap_model: Option<SwapModel>,
     /// Live mode's swap thread, started on the first live frame.
     async_swap: Option<AsyncSwap>,
-    enhancer: Option<Enhancer>,
+    enhancer: SharedEnhancer,
+    /// Live mode's restoration thread, started on the first live frame that restores.
+    async_enhance: Option<AsyncEnhance>,
     masker: Masker,
     identity: Option<Embedding>,
     /// `identity` converted for the current swapper.
@@ -159,7 +162,8 @@ impl Processor {
             swapper: Arc::new(Mutex::new(None)),
             swap_model: None,
             async_swap: None,
-            enhancer: None,
+            enhancer: Arc::new(Mutex::new(None)),
+            async_enhance: None,
             masker: Masker::default(),
             identity: None,
             condition: None,
@@ -232,8 +236,9 @@ impl Processor {
         }
         self.detector.prepare(settings.detector_size)?;
         self.detector.prepare(self.tracker.config.region_size)?;
-        if settings.enhance && self.enhancer.is_none() {
-            self.enhancer = Some(Enhancer::new(&self.engine)?);
+        if settings.enhance && async_enhance::lock(&self.enhancer).is_none() {
+            let enhancer = Enhancer::new(&self.engine)?;
+            *async_enhance::lock(&self.enhancer) = Some(enhancer);
         }
         self.masker.prepare(&self.engine, &settings.mask_spec())
     }
@@ -283,6 +288,14 @@ impl Processor {
 
             if settings.enhance {
                 let enhance_started = Instant::now();
+                if timewarp {
+                    if self.async_enhance.is_none() {
+                        self.async_enhance = Some(AsyncEnhance::spawn(self.enhancer.clone())?);
+                    }
+                    let reuse = &self.reuse;
+                    let swaps = |index| (reuse.generation(index), reuse.version(index));
+                    self.async_enhance.as_mut().expect("started above").update(frame, &faces, swaps)?;
+                }
                 for (index, face) in faces.iter().enumerate() {
                     let Some(region) = detail_region(frame, face) else { continue };
                     let (original, swapped) = (self.restoration.original[index], detail(frame, region));
@@ -292,7 +305,16 @@ impl Processor {
                         stats.restorations_skipped += 1;
                         continue;
                     }
-                    let crop = self.enhancer.as_mut().expect("prepared").enhance(frame, &face.landmarks)?;
+                    let crop = match self.async_enhance.as_mut().filter(|_| timewarp) {
+                        // Live: the last restoration, re-applied to the face as it is now.
+                        Some(worker) => {
+                            match worker.crop(index, (self.reuse.generation(index), self.reuse.version(index)), frame, &face.landmarks) {
+                                Some(crop) => crop,
+                                None => continue,
+                            }
+                        }
+                        None => async_enhance::lock(&self.enhancer).as_mut().expect("prepared").enhance(frame, &face.landmarks)?,
+                    };
                     let PasteMask { mask, resampled, realigned } = &mut self.paste_mask;
                     // Model masks live in the swap's ArcFace alignment; GFPGAN works in FFHQ's.
                     let model_mask = self.masker.mask(index).map(|m| {
@@ -318,6 +340,9 @@ impl Processor {
                         self.restoration.settle(index, faces.len(), needed, live)
                     };
                     paste(frame, &crop, mask, amount * settings.enhance_blend);
+                    if let Some(worker) = self.async_enhance.as_mut().filter(|_| timewarp) {
+                        worker.recycle(crop.pixels);
+                    }
                 }
                 stats.enhance_ms = elapsed_ms(enhance_started);
             }

@@ -31,6 +31,8 @@ struct Slot {
     generation: u64,
     /// When the frame the crop was swapped from was captured.
     taken: Option<Instant>,
+    /// Counts the crops stored, so a consumer can tell when it changed.
+    version: u64,
     /// The aligned camera crop `crop` was swapped from, and its alignment.
     source: Vec<u8>,
     to_crop: Affine,
@@ -134,6 +136,12 @@ impl SwapReuse {
         self.slots[index].generation
     }
 
+    /// Changes whenever face `index` gets a new crop.
+    #[must_use]
+    pub fn version(&self, index: usize) -> u64 {
+        self.slots.get(index).map_or(0, |slot| slot.version)
+    }
+
     /// How old face `index`'s crop is.
     #[must_use]
     pub fn age(&self, index: usize) -> Option<Duration> {
@@ -171,6 +179,7 @@ impl Slot {
         self.source.clear();
         self.source.extend_from_slice(source);
         (self.to_crop, self.crop_size, self.valid, self.taken) = (*to_crop, crop_size, true, Some(taken));
+        self.version += 1;
     }
 }
 

@@ -8,8 +8,8 @@
 //! UI (see [`super::LiveSession::recycle_preview`]).
 
 use super::state::{Image, Shared};
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use wessh_core::Frame;
@@ -17,6 +17,8 @@ use wessh_media::{FrameSink, LatestFrame};
 
 /// How long the presenter waits for a frame before checking for control messages.
 const POLL: Duration = Duration::from_millis(100);
+/// Weight of the newest frame in the smoothed latency.
+const LATENCY_SMOOTHING: f32 = 0.1;
 
 /// What the inference thread tells the presenter besides frames.
 pub(super) enum Control {
@@ -35,7 +37,7 @@ pub(super) struct Presenter {
 impl Presenter {
     pub fn spawn(shared: Arc<Shared>, repaint: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let frames = Arc::new(LatestFrame::default());
-        let (control, inbox) = crossbeam_channel::unbounded();
+        let (control, inbox) = std::sync::mpsc::channel();
         let mailbox = frames.clone();
         let thread = std::thread::Builder::new().name("present".into()).spawn(move || run(&mailbox, &inbox, &shared, &*repaint))?;
         Ok(Self { frames, control: Some(control), thread: Some(thread) })
@@ -84,6 +86,12 @@ fn run(frames: &LatestFrame, inbox: &Receiver<Control>, shared: &Shared, repaint
             });
         }
         publish_preview(shared, &frame);
+        if let Some(captured) = frame.captured {
+            let latency = captured.elapsed().as_secs_f32() * 1000.0;
+            shared.update(|s| {
+                s.latency_ms = if s.latency_ms > 0.0 { LATENCY_SMOOTHING.mul_add(latency - s.latency_ms, s.latency_ms) } else { latency };
+            });
+        }
         repaint();
         match &camera {
             Some(camera) => camera.recycle(frame),

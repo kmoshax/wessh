@@ -51,7 +51,7 @@ Use the update button in the app bar to check stable releases, download an updat
 
 - Live webcam preview, plus image and video face swapping.
 - Face restoration and stable tracking.
-- Automatic GPU acceleration with a CPU fallback.
+- Automatic GPU acceleration on NVIDIA, AMD, Intel and Apple GPUs, with a CPU fallback.
 - Local processing, with runtime and models kept in one data directory.
 
 <details>
@@ -59,10 +59,25 @@ Use the update button in the app bar to check stable releases, download an updat
 
 - Face crops are processed in parallel without copying whole frames.
 - Capture, inference and output run on separate threads; stale frames are dropped.
+- Live mode runs the swap network beside the frame loop: every frame is pasted at camera rate
+  with the newest swap, re-aligned to where the face is now, and a face that hasn't changed
+  isn't swapped again.
+- Landmarks are followed by optical flow, steady on a still face without lagging a moving one.
 - Video decoding and encoding are pipelined, with NVENC / VideoToolbox when available.
-- ONNX Runtime loads dynamically; embeddings, masks and TensorRT engines are cached.
+- ONNX Runtime loads dynamically; embeddings, masks and compiled GPU kernels are cached.
 
-Measure your hardware with `wessh bench`; see [benchmark instructions](CONTRIBUTING.md#benchmarks).
+Measured with `wessh bench` (a 2079×2739 photo, inswapper, restoration off) on a laptop
+RTX 4050 6 GB, driver 615, Linux:
+
+| Backend                      | Frame time | 95th percentile |
+| ---------------------------- | ---------- | --------------- |
+| CUDA 13 + cuDNN              | 33.0 ms    | 43.6 ms         |
+| TensorRT for RTX             | 21.5 ms    | 23.8 ms         |
+| TensorRT for RTX, live mode  | 11.3 ms    | 14.5 ms         |
+
+Live mode is the async swap above, on a still face; with the face restored by GFPGAN the swap
+alone takes 126 ms (CUDA: 193 ms). Measure your hardware with `wessh bench`; see
+[benchmark instructions](CONTRIBUTING.md#benchmarks).
 
 </details>
 
@@ -102,20 +117,26 @@ Global options:
 | `--no-models`                    | skip the models (the app downloads them on first start)              |
 | `--ort-version <x.y.z>`          | ONNX Runtime release to install (default: the tested one)            |
 
-Setup is idempotent (finished components are skipped), downloads resume after interruption,
-and every file is checked against the SHA-256 its source publishes.
+Setup is idempotent (finished components are skipped) and downloads resume after interruption.
+From NVIDIA's wheels only the libraries wessh loads are downloaded (HTTP range requests), each
+checked against the SHA-256 the wheel lists for it; every other file is checked against the
+SHA-256 its source publishes.
 
 ### How the runtime flavour is chosen
 
-| Machine                                  | Flavour  | Installed                                         |
-| ---------------------------------------- | -------- | ------------------------------------------------- |
-| NVIDIA, driver 580 or newer (x86-64)     | `cuda13` | ONNX Runtime GPU + CUDA 13, cuBLAS, cuFFT, cuRAND, cuDNN 9 |
-| NVIDIA, driver 525–579 (x86-64)          | `cuda12` | ONNX Runtime GPU + CUDA 12 libraries              |
-| Apple Silicon                            | `coreml` | ONNX Runtime for macOS arm64                      |
-| anything else                            | `cpu`    | ONNX Runtime CPU                                  |
+| Machine                                          | Flavour  | Installed                                              | Download |
+| ------------------------------------------------ | -------- | ------------------------------------------------------ | -------- |
+| NVIDIA RTX 30-series or newer, driver 525+       | `rtx`    | ONNX Runtime + NVIDIA TensorRT for RTX                 | 104 MB   |
+| other NVIDIA GPUs, driver 580+ (x86-64)          | `cuda13` | ONNX Runtime GPU + CUDA 13, cuBLAS, cuRAND, cuDNN 9    | 1.3 GB   |
+| other NVIDIA GPUs, driver 525–579 (x86-64)       | `cuda12` | ONNX Runtime GPU + CUDA 12 libraries                   | 1.8 GB   |
+| AMD or Intel GPU (Windows; Linux with Vulkan)    | `webgpu` | ONNX Runtime + WebGPU                                  | 16 MB    |
+| Apple Silicon                                    | `coreml` | ONNX Runtime for macOS arm64                           | 9 MB     |
+| anything else                                    | `cpu`    | ONNX Runtime CPU                                       | 9 MB     |
 
-The CUDA libraries come from NVIDIA's official redistributable wheels on PyPI, so no CUDA
-toolkit is needed — only the NVIDIA driver.
+The face models add 469 MB (GFPGAN restoration another 366 MB, when you turn it on). The NVIDIA
+libraries come from NVIDIA's official redistributable wheels on PyPI, so no CUDA toolkit is
+needed — only the driver. TensorRT for RTX compiles its kernels for your GPU on the first start
+(about 10 s, shown at the end of setup) and reuses them afterwards.
 
 ## Files and environment
 
@@ -129,7 +150,7 @@ Everything wessh downloads lives in one directory: `$WESSH_HOME`, or by default
 <data dir>/ort/lib/plugins/  TensorRT for RTX or WebGPU plugin
 <data dir>/rtx_cache/        TensorRT for RTX kernel cache
 <data dir>/models/           ONNX models
-<data dir>/trt_cache/        TensorRT engine and timing caches
+<data dir>/trt_cache/        TensorRT engine caches (only with an `--ort` runtime that has TensorRT)
 ```
 
 Uninstalling is deleting that directory and the binary.
@@ -169,8 +190,8 @@ wessh cam -s me.jpg --out /dev/video10
 
 - **Intel Macs**: Microsoft no longer publishes ONNX Runtime for macOS x86-64. Install it with
   `brew install onnxruntime` and pass `--ort "$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib"`.
-- **Windows without NVIDIA**: runs on the CPU. DirectML builds of ONNX Runtime stop at 1.24,
-  older than the 1.28 wessh needs.
+- **AMD / Intel GPUs on Linux** need the Vulkan loader (`libvulkan.so.1`, packaged as
+  `vulkan-icd-loader` / `libvulkan1`) for WebGPU; without it wessh runs on the CPU.
 - **Linux arm64 with NVIDIA** (Jetson and similar): ONNX Runtime publishes no GPU build, so
   `wessh setup` installs the CPU one; point `--ort` at a JetPack build to use the GPU.
 

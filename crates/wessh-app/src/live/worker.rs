@@ -1,9 +1,9 @@
 use super::presenter::{Control, Presenter};
 use super::state::{Image, Phase, Shared};
 use super::{Command, EngineOptions};
-use crossbeam_channel::{Receiver, TryRecvError};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 use wessh_core::{Engine, Frame, Processor};
 use wessh_media::{Camera, FrameSink, LatestFrame};
@@ -39,7 +39,8 @@ pub(super) fn run(engine: &EngineOptions, shared: &Arc<Shared>, inbox: &Receiver
     let mailbox = Arc::new(LatestFrame::default());
     let mut stream: Option<Stream> = None;
     let mut seen = 0;
-    let (mut window, mut frames) = (Instant::now(), 0u32);
+    // Processed frames, and the camera's frame count, since the window began.
+    let (mut window, mut frames, mut window_seen) = (Instant::now(), 0u32, 0u64);
 
     loop {
         let command = if stream.is_some() {
@@ -83,10 +84,11 @@ pub(super) fn run(engine: &EngineOptions, shared: &Arc<Shared>, inbox: &Receiver
                     s.stats = stats;
                     if elapsed >= FPS_WINDOW {
                         s.fps = frames as f32 / elapsed.as_secs_f32();
+                        s.capture_fps = seen.saturating_sub(window_seen) as f32 / elapsed.as_secs_f32();
                     }
                 });
                 if elapsed >= FPS_WINDOW {
-                    (window, frames) = (Instant::now(), 0);
+                    (window, frames, window_seen) = (Instant::now(), 0, seen);
                 }
             }
             Err(e) => shared.update(|s| s.notice = Some(format!("{e:#}"))),

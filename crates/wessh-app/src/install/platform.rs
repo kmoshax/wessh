@@ -11,6 +11,9 @@ const CUDA13_MIN_DRIVER: u32 = 580;
 const CUDA12_MIN_DRIVER: u32 = 525;
 /// TensorRT for RTX runs on Ampere (compute capability 8.0) and newer GeForce / RTX GPUs.
 const RTX_MIN_COMPUTE: (u32, u32) = (8, 0);
+/// Its arm64 build is for Blackwell desktops (DGX Spark, compute 12.1); Jetson's integrated GPUs
+/// (Orin 8.7) aren't RTX GPUs.
+const RTX_MIN_COMPUTE_ARM: (u32, u32) = (12, 0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Os {
@@ -298,11 +301,24 @@ pub fn choose_flavour(target: Target, gpus: &[Gpu]) -> Choice {
         };
     };
     // TensorRT for RTX: about a tenth of the CUDA download and faster (wessh bench, RTX 4050:
-    // inswapper 21.5 vs 33.0 ms a frame, p95 23.8 vs 43.6 ms; GFPGAN 126 vs 193 ms).
-    if nvidia.is_rtx_capable() && nvidia.driver_major().is_some_and(|major| major >= CUDA13_MIN_DRIVER) {
+    // inswapper 21.5 vs 33.0 ms a frame, p95 23.8 vs 43.6 ms; GFPGAN 126 vs 193 ms). Its CUDA 12
+    // build, for drivers before R580, is published for x86-64 only.
+    let rtx_driver = nvidia
+        .driver_major()
+        .is_some_and(|major| major >= CUDA13_MIN_DRIVER || (major >= CUDA12_MIN_DRIVER && target.arch == Arch::X86_64));
+    let rtx_gpu = nvidia.is_rtx_capable() && (target.arch == Arch::X86_64 || nvidia.compute.is_some_and(|c| c >= RTX_MIN_COMPUTE_ARM));
+    if rtx_gpu && rtx_driver {
         return choice(Flavour::Rtx, format!("{} with driver {}", nvidia.name, nvidia.driver.as_deref().unwrap_or_default()));
     }
     cuda_choice(target, nvidia)
+}
+
+/// CUDA generation of the TensorRT for RTX plugin the NVIDIA driver runs: 13 from R580 (and when
+/// the driver is unknown), else 12.
+#[must_use]
+pub fn rtx_cuda_major(gpus: &[Gpu]) -> u32 {
+    let driver = gpus.iter().find(|g| g.vendor == Vendor::Nvidia).and_then(Gpu::driver_major);
+    if driver.is_none_or(|major| major >= CUDA13_MIN_DRIVER) { 13 } else { 12 }
 }
 
 /// The flavour for an explicit `--device`; `Auto` is [`choose_flavour`].
@@ -397,9 +413,17 @@ mod tests {
         assert_eq!(choose_flavour(LINUX_X64, &[rtx("580.1", (8, 0))]).flavour, Flavour::Rtx);
         let arm = Target { os: Os::Linux, arch: Arch::Aarch64 };
         assert_eq!(choose_flavour(arm, &[rtx("615.1", (12, 0))]).flavour, Flavour::Rtx);
-        // An older driver or a pre-Ampere GPU stays on CUDA.
-        assert_eq!(choose_flavour(LINUX_X64, &[rtx("570.1", (8, 9))]).flavour, Flavour::Cuda12);
+        // Drivers before R580 get the plugin's CUDA 12 build (x86-64 only).
+        assert_eq!(choose_flavour(LINUX_X64, &[rtx("570.1", (8, 9))]).flavour, Flavour::Rtx);
+        assert_eq!(rtx_cuda_major(&[rtx("570.1", (8, 9))]), 12);
+        assert_eq!(rtx_cuda_major(&[rtx("580.1", (8, 9))]), 13);
+        assert_eq!(rtx_cuda_major(&[]), 13);
+        assert_eq!(choose_flavour(arm, &[rtx("570.1", (12, 1))]).flavour, Flavour::Cpu);
+        assert_eq!(choose_flavour(arm, &[rtx("615.1", (8, 7))]).flavour, Flavour::Cpu, "Jetson Orin");
+        // A driver too old for either, or a pre-Ampere GPU, stays on CUDA.
+        assert_eq!(choose_flavour(LINUX_X64, &[rtx("520.1", (8, 9))]).flavour, Flavour::Cpu);
         assert_eq!(choose_flavour(LINUX_X64, &[rtx("615.1", (7, 5))]).flavour, Flavour::Cuda13);
+        assert_eq!(choose_flavour(LINUX_X64, &[rtx("570.1", (7, 5))]).flavour, Flavour::Cuda12);
     }
 
     #[test]

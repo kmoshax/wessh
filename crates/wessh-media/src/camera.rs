@@ -11,6 +11,7 @@ use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 /// Formats we convert ourselves, most preferred first: MJPEG reaches 720p/1080p at 30 fps on
 /// every UVC webcam, where uncompressed YUYV often tops out at a few frames per second.
@@ -120,6 +121,7 @@ impl Camera {
                 if stdout.read_exact(&mut frame.data).is_err() {
                     break;
                 }
+                frame.captured = Some(Instant::now());
                 output.publish(frame);
             }
         })?;
@@ -140,9 +142,52 @@ impl Camera {
     }
 }
 
+/// Keeps a camera at its full frame rate while capturing. With exposure priority on, a camera may
+/// lengthen its exposure in dim light at the cost of frames — a 30 fps webcam drops to 15, doubling
+/// the delay before a face appears. Live swapping wants every frame, so it is switched off for as
+/// long as wessh captures, and the user's setting restored when capture stops (a killed process
+/// leaves it off, which is the camera's own default).
+struct SteadyFrameRate {
+    #[cfg(target_os = "linux")]
+    device: Option<v4l::Device>,
+}
+
+/// `V4L2_CID_EXPOSURE_AUTO_PRIORITY` (`linux/v4l2-controls.h`), `exposure_dynamic_framerate` to
+/// `v4l2-ctl`.
+#[cfg(target_os = "linux")]
+const EXPOSURE_AUTO_PRIORITY: u32 = 0x009a_0903;
+
+impl SteadyFrameRate {
+    #[cfg(target_os = "linux")]
+    fn hold(index: u32) -> Self {
+        use v4l::control::{Control, Value};
+        let device = v4l::Device::new(index as usize).ok().filter(|device| {
+            device.control(EXPOSURE_AUTO_PRIORITY).is_ok_and(|control| control.value == Value::Boolean(true))
+                && device.set_control(Control { id: EXPOSURE_AUTO_PRIORITY, value: Value::Boolean(false) }).is_ok()
+        });
+        Self { device }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    const fn hold(_index: u32) -> Self {
+        Self {}
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for SteadyFrameRate {
+    fn drop(&mut self) {
+        use v4l::control::{Control, Value};
+        if let Some(device) = &self.device {
+            let _ = device.set_control(Control { id: EXPOSURE_AUTO_PRIORITY, value: Value::Boolean(true) });
+        }
+    }
+}
+
 /// Read camera `index` until `stop` is set, converting every frame to BGR at the configured size.
 fn capture_native(index: u32, config: &CameraConfig, output: &LatestFrame, stop: &AtomicBool) -> std::result::Result<(), String> {
     request_camera_access();
+    let _steady = SteadyFrameRate::hold(index);
     let wanted = CameraFormat::new_from(config.width as u32, config.height as u32, FrameFormat::MJPEG, config.fps);
     let request = RequestedFormat::with_formats(RequestedFormatType::Closest(wanted), &NATIVE_FORMATS);
     let mut camera = nokhwa::Camera::new(CameraIndex::Index(index), request).map_err(|e| e.to_string())?;
@@ -155,6 +200,7 @@ fn capture_native(index: u32, config: &CameraConfig, output: &LatestFrame, stop:
         let resolution = camera.resolution();
         let (src_w, src_h) = (resolution.width() as usize, resolution.height() as usize);
         let raw = camera.frame_raw().map_err(|e| e.to_string())?;
+        let captured = Instant::now();
         let mut frame = output.spare(width, height);
         if (src_w, src_h) == (width, height) {
             convert::to_bgr(format, &raw, width, height, &mut frame.data).map_err(|e| e.to_string())?;
@@ -163,6 +209,7 @@ fn capture_native(index: u32, config: &CameraConfig, output: &LatestFrame, stop:
             convert::to_bgr(format, &raw, src_w, src_h, &mut native).map_err(|e| e.to_string())?;
             convert::letterbox(&native, src_w, src_h, &mut frame.data, width, height);
         }
+        frame.captured = Some(captured);
         output.publish(frame);
     }
     let _ = camera.stop_stream();

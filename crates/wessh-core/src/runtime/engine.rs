@@ -10,6 +10,7 @@ use ort::ep::{CUDA, CoreML, ExecutionProvider, ExecutionProviderDispatch, Tensor
 use ort::session::Session;
 use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 
 /// Fixed sizes for a model's symbolic dimensions, and graph edits applied before loading it
 /// (see [`Engine::load_static_with`]).
@@ -251,7 +252,7 @@ impl Engine {
             .with_intra_threads(if gpu { 1 } else { self.cpu_threads })
             .map_err(ort::Error::<()>::from)?;
         builder = match self.backend.plugin() {
-            Some(plugin) => with_plugin(builder, plugin, options)?,
+            Some(plugin) => with_plugin(builder, plugin)?,
             None => builder.with_execution_providers(self.execution_providers(options)).map_err(ort::Error::<()>::from)?,
         };
         match bytes {
@@ -308,6 +309,19 @@ impl Engine {
 /// run on. The TensorRT for RTX plugin brings versioned libraries without the symlinks the
 /// loader looks for (`libtensorrt_rtx.so.1`), so they are preloaded like the CUDA ones.
 fn register_plugin(runtime_dir: &Path, plugin: Plugin) -> bool {
+    // The app initialises an engine on both its live and its job worker, but a plugin can be
+    // registered with the process's environment only once: later engines reuse the outcome.
+    static REGISTERED: Mutex<Vec<(Plugin, bool)>> = Mutex::new(Vec::new());
+    let mut registered = REGISTERED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(&(_, found)) = registered.iter().find(|(p, _)| *p == plugin) {
+        return found;
+    }
+    let found = load_plugin(runtime_dir, plugin);
+    registered.push((plugin, found));
+    found
+}
+
+fn load_plugin(runtime_dir: &Path, plugin: Plugin) -> bool {
     let Some(library) = locate::plugin_library(runtime_dir, plugin) else { return false };
     if let Some(dir) = library.parent() {
         locate::preload_libraries(dir);
@@ -327,7 +341,7 @@ fn register_plugin(runtime_dir: &Path, plugin: Plugin) -> bool {
 }
 
 /// Attach `plugin`'s devices to the session, with its options.
-fn with_plugin(builder: SessionBuilder, plugin: Plugin, options: &SessionOptions<'_>) -> ort::Result<SessionBuilder> {
+fn with_plugin(builder: SessionBuilder, plugin: Plugin) -> ort::Result<SessionBuilder> {
     let env = Environment::current()?;
     let key = |name: &str| format!("{}.{name}", plugin.ep_name());
     let settings = match plugin {
@@ -337,7 +351,10 @@ fn with_plugin(builder: SessionBuilder, plugin: Plugin, options: &SessionOptions
             let _ = std::fs::create_dir_all(&cache);
             vec![
                 (key("nv_runtime_cache_path"), cache.to_string_lossy().into_owned()),
-                (key("enable_cuda_graph"), if options.cuda_graph { "1" } else { "0" }.to_owned()),
+                // Off explicitly (the plugin may default it on): checked over 30 different frames
+                // it stays correct with host inputs re-bound every run, but gains nothing (RTX 4050:
+                // 26.4 vs 27.6 ms a frame) while tying a replay to device addresses ORT may change.
+                (key("enable_cuda_graph"), "0".to_owned()),
             ]
         }
         Plugin::WebGpu => Vec::new(),

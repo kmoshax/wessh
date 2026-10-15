@@ -75,8 +75,8 @@ pub fn render(
     let started = Instant::now();
     let mut progress = Progress { total: job.info.total_frames(), ..Progress::default() };
 
-    let (decoded_tx, decoded) = crossbeam_channel::bounded::<Frame>(QUEUE);
-    let (swapped, swapped_rx) = crossbeam_channel::bounded::<Frame>(QUEUE);
+    let (decoded_tx, decoded) = std::sync::mpsc::sync_channel::<Frame>(QUEUE);
+    let (swapped, swapped_rx) = std::sync::mpsc::sync_channel::<Frame>(QUEUE);
     let (swap_result, encode_result) = std::thread::scope(|scope| {
         scope.spawn(move || reader.map(|frame| decoded_tx.send(frame)).take_while(Result::is_ok).count());
         let encoder = scope.spawn(move || -> wessh_media::Result<()> {

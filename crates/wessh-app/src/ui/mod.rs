@@ -24,9 +24,10 @@ use components::navigation::{RAIL_WIDTH, TOP_APP_BAR_HEIGHT};
 use components::{Chip, IconButton, drop_overlay, navigation_rail, top_app_bar};
 use eframe::egui::{self, CentralPanel, Context, Key, Margin, Panel};
 use file_picker::{IMAGE_EXTENSIONS, has_extension};
-use screens::onboarding::{Next, Onboarding};
+use screens::onboarding::{EngineProgress, Next, Onboarding};
 use screens::{ImageScreen, LiveScreen, Screen, VideoScreen};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use theme::{Brightness, ThemeConfig, spacing};
 
 const INITIAL_WINDOW: [f32; 2] = [1320.0, 840.0];
@@ -53,10 +54,12 @@ pub fn run(options: Options) -> anyhow::Result<()> {
 }
 
 /// The window: onboarding until everything is installed, then the app. The engine (and so the
-/// models) only loads once the app starts.
+/// models) starts loading as soon as everything is installed, while onboarding shows its last page.
 struct Shell {
     options: Options,
     onboarding: Option<Box<Onboarding>>,
+    /// The engine's workers, started before the app opens.
+    engine: Option<Engine>,
     app: Option<Box<App>>,
     theme: ThemeConfig,
     /// Design review capture, while onboarding shows (the app takes it over afterwards).
@@ -72,7 +75,7 @@ impl Shell {
         theme::install_fonts(ctx);
         theme::apply(ctx, theme);
         let onboarding = Onboarding::check(ctx, &options, dev.onboarding).map(Box::new);
-        let mut shell = Self { options, onboarding, app: None, theme, capture: None, updater: updater::Updater::new(ctx) };
+        let mut shell = Self { options, onboarding, engine: None, app: None, theme, capture: None, updater: updater::Updater::new(ctx) };
         if shell.onboarding.is_some() {
             shell.capture = dev.capture;
         } else {
@@ -81,15 +84,44 @@ impl Shell {
         shell
     }
 
-    /// Initialise the engine and show the app.
+    /// Show the app, on the engine started during onboarding (or now).
     fn open_app(&mut self, ctx: &Context) {
         self.onboarding = None;
-        let engine = EngineOptions { runtime: self.options.ort.clone(), device: self.options.device };
+        let Engine { session, jobs, .. } = self.engine.take().unwrap_or_else(|| Engine::start(ctx, &self.options));
+        self.app = Some(Box::new(App::new(ctx, session, jobs, self.theme)));
+    }
+}
+
+/// The live session and the job worker, each initialising inference on its own thread.
+struct Engine {
+    session: LiveSession,
+    jobs: JobRunner,
+    started: Instant,
+    /// How long the live session took to get ready.
+    loaded_in: Option<Duration>,
+}
+
+impl Engine {
+    fn start(ctx: &Context, options: &Options) -> Self {
+        let engine = EngineOptions { runtime: options.ort.clone(), device: options.device };
         let repaint = ctx.clone();
-        let session = LiveSession::spawn(engine.clone(), self.options.settings(), move || repaint.request_repaint());
+        let session = LiveSession::spawn(engine.clone(), options.settings(), move || repaint.request_repaint());
         let repaint = ctx.clone();
         let jobs = JobRunner::spawn(engine, move || repaint.request_repaint());
-        self.app = Some(Box::new(App::new(ctx, session, jobs, self.theme)));
+        Self { session, jobs, started: Instant::now(), loaded_in: None }
+    }
+
+    fn progress(&mut self) -> EngineProgress {
+        let phase = self.session.snapshot().phase;
+        let failure = match phase {
+            Phase::Failed(error) => Some(error),
+            Phase::Loading => None,
+            Phase::Ready | Phase::Live => {
+                self.loaded_in.get_or_insert_with(|| self.started.elapsed());
+                None
+            }
+        };
+        EngineProgress { elapsed: self.loaded_in.unwrap_or_else(|| self.started.elapsed()), ready: self.loaded_in.is_some(), failure }
     }
 }
 
@@ -97,7 +129,11 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         if let Some(onboarding) = &mut self.onboarding {
-            if onboarding.ui(ui) == Next::OpenApp {
+            if onboarding.is_done() && self.engine.is_none() {
+                self.engine = Some(Engine::start(ctx, &self.options));
+            }
+            let progress = self.engine.as_mut().map(Engine::progress);
+            if onboarding.ui(ui, progress.as_ref()) == Next::OpenApp {
                 self.open_app(ctx);
             } else if let Some(capture) = &mut self.capture {
                 capture.update(ctx, &Phase::Ready);

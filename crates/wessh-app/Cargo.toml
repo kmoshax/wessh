@@ -20,7 +20,6 @@ wessh-core = { workspace = true, features = ["clap"] }
 wessh-media.workspace = true
 eframe.workspace = true
 image.workspace = true
-crossbeam-channel.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 anyhow.workspace = true

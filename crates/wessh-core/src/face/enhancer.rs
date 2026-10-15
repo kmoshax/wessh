@@ -26,12 +26,20 @@ impl Enhancer {
     }
 
     pub fn enhance(&mut self, frame: &Frame, landmarks: &Landmarks5) -> Result<AlignedCrop> {
-        let norm = Normalization::SIGNED_RGB;
         let to_input = Template::Ffhq512.align(landmarks, Self::INPUT_SIZE);
-        warp_crop_into(frame, &to_input, Self::INPUT_SIZE, &mut self.crop);
-        to_nchw_into(&self.crop, Self::INPUT_SIZE, norm, self.model.input_mut(0));
-        self.model.run()?;
+        let mut crop = std::mem::take(&mut self.crop);
+        warp_crop_into(frame, &to_input, Self::INPUT_SIZE, &mut crop);
+        let pixels = self.restore(&crop);
+        self.crop = crop;
         let size = Self::OUTPUT_SIZE;
-        Ok(AlignedCrop { pixels: from_nchw(self.model.output(0), size, norm), size, to_crop: Template::Ffhq512.align(landmarks, size) })
+        Ok(AlignedCrop { pixels: pixels?, size, to_crop: Template::Ffhq512.align(landmarks, size) })
+    }
+
+    /// Restore an [`Self::INPUT_SIZE`]² FFHQ-aligned BGR face into an [`Self::OUTPUT_SIZE`]² one.
+    pub fn restore(&mut self, aligned: &[u8]) -> Result<Vec<u8>> {
+        let norm = Normalization::SIGNED_RGB;
+        to_nchw_into(aligned, Self::INPUT_SIZE, norm, self.model.input_mut(0));
+        self.model.run()?;
+        Ok(from_nchw(self.model.output(0), Self::OUTPUT_SIZE, norm))
     }
 }

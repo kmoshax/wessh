@@ -1,5 +1,6 @@
 //! The per-frame face swap pipeline.
 
+mod async_enhance;
 mod async_swap;
 mod flow;
 pub mod pixel_boost;

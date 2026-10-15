@@ -73,6 +73,13 @@ pub fn get_json<T: DeserializeOwned>(url: &str) -> Result<T> {
     serde_json::from_str(&body).with_context(|| format!("unexpected response from {url}"))
 }
 
+/// Bytes `start..end` of a remote file.
+pub fn get_range(url: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+    let body = run(curl().args(["--silent", "--show-error", "--range", &format!("{start}-{}", end - 1), url]), url)?;
+    ensure!(body.len() as u64 == end - start, "{url} ignored the byte range (got {} bytes)", body.len());
+    Ok(body)
+}
+
 /// Size and published checksum of a remote file, from a HEAD request.
 pub fn head(url: &str) -> Result<(Option<u64>, Option<String>)> {
     let headers = run(curl().args(["--silent", "--show-error", "--head", url]), url)?;
@@ -129,19 +136,14 @@ pub fn download(item: &Download, dest: &Path, cancel: &AtomicBool, progress: &mu
     if item.size.is_some_and(|size| file_len(&partial) > size) {
         std::fs::remove_file(&partial)?; // longer than the real file: not a prefix of it
     }
-    let mut resumes = 0;
-    while item.size != Some(file_len(&partial)) {
-        let before = file_len(&partial);
-        match transfer(item, &partial, cancel, progress) {
-            Ok(()) => break,
-            Err(e) if e.is::<Cancelled>() => return Err(e),
-            Err(e) if file_len(&partial) > before && resumes < AUTO_RESUMES => {
-                resumes += 1;
-                eprintln!("{}: {e:#}; resuming ({resumes}/{AUTO_RESUMES})", item.file_name);
-            }
-            Err(e) => return Err(e),
+    with_resumes(&item.file_name, &partial, |partial| {
+        if item.size == Some(file_len(partial)) {
+            return Ok(());
         }
-    }
+        let mut cmd = curl();
+        cmd.args(["--continue-at", "-", "--output"]).arg(partial).arg(&item.url).stdout(Stdio::null());
+        transfer(cmd, &item.file_name, partial, cancel, &mut |bytes| progress(Transfer::Bytes(bytes)))
+    })?;
     if let Err(e) = verify(item, &partial, cancel, progress) {
         if e.is::<Cancelled>() {
             return Err(e);
@@ -177,19 +179,56 @@ pub fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map_or(0, |m| m.len())
 }
 
-/// One curl run appending to `partial`, polled for progress and cancellation.
-fn transfer(item: &Download, partial: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(Transfer)) -> Result<()> {
-    let mut child = curl()
-        .args(["--silent", "--show-error", "--continue-at", "-", "--speed-limit", STALL_BYTES_PER_SEC, "--speed-time", STALL_SECS])
-        .arg("--output")
-        .arg(partial)
-        .arg(&item.url)
-        .stdout(Stdio::null())
+/// Bytes `start..end` of `url` into `partial`, resuming what it already holds, polled like
+/// [`download`]; `progress` gets the bytes of the range on disk.
+pub fn download_range(url: &str, start: u64, end: u64, partial: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<()> {
+    let len = end - start;
+    if file_len(partial) > len {
+        std::fs::remove_file(partial)?;
+    }
+    let name = partial.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    with_resumes(&name, partial, |partial| {
+        let have = file_len(partial);
+        if have == len {
+            return Ok(());
+        }
+        let output = File::options().create(true).append(true).open(partial)?;
+        let mut cmd = curl();
+        cmd.args(["--range", &format!("{}-{}", start + have, end - 1), url]).stdout(output);
+        transfer(cmd, &name, partial, cancel, progress)
+    })?;
+    ensure!(file_len(partial) == len, "{name}: the server sent {} of {len} bytes", file_len(partial));
+    Ok(())
+}
+
+/// Run `attempt` (which returns early when the file is already complete) until it succeeds. An
+/// attempt that fails after making progress (a dropped connection) is retried up to
+/// [`AUTO_RESUMES`] times.
+fn with_resumes(name: &str, partial: &Path, mut attempt: impl FnMut(&Path) -> Result<()>) -> Result<()> {
+    let mut resumes = 0;
+    loop {
+        let before = file_len(partial);
+        match attempt(partial) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.is::<Cancelled>() => return Err(e),
+            Err(e) if file_len(partial) > before && resumes < AUTO_RESUMES => {
+                resumes += 1;
+                eprintln!("{name}: {e:#}; resuming ({resumes}/{AUTO_RESUMES})");
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Run a curl download `cmd` that writes to `partial`, polled for progress and cancellation.
+fn transfer(mut cmd: Command, name: &str, partial: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(u64)) -> Result<()> {
+    let mut child = cmd
+        .args(["--silent", "--show-error", "--speed-limit", STALL_BYTES_PER_SEC, "--speed-time", STALL_SECS])
         .stderr(Stdio::piped())
         .spawn()
         .context("could not run curl; install it and retry")?;
     let status = loop {
-        progress(Transfer::Bytes(file_len(partial)));
+        progress(file_len(partial));
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
@@ -200,7 +239,7 @@ fn transfer(item: &Download, partial: &Path, cancel: &AtomicBool, progress: &mut
         }
         std::thread::sleep(POLL);
     };
-    progress(Transfer::Bytes(file_len(partial)));
+    progress(file_len(partial));
     if status.success() {
         return Ok(());
     }
@@ -210,7 +249,7 @@ fn transfer(item: &Download, partial: &Path, cancel: &AtomicBool, progress: &mut
     }
     let reason = stderr.trim().trim_start_matches("curl: ").to_owned();
     let reason = if reason.is_empty() { status.to_string() } else { reason };
-    bail!("download of {} failed: {reason}", item.file_name)
+    bail!("download of {name} failed: {reason}")
 }
 
 /// Where the unfinished download of `dest` is kept.

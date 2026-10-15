@@ -17,7 +17,10 @@ use clap::Parser;
 fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
     match cli.command {
-        None => ui::run(cli.options),
+        None => {
+            update::clean_up();
+            ui::run(cli.options)
+        }
         Some(command) => commands::run(command, &cli.options),
     }
 }

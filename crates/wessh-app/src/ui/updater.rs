@@ -231,7 +231,7 @@ impl Updater {
                 self.check(ctx);
             }
             if install && let Some(prepared) = &self.prepared {
-                match update::launch(prepared, true) {
+                match update::install_and_restart(prepared) {
                     Ok(()) => return true,
                     Err(error) => self.error = Some(format!("{error:#}")),
                 }

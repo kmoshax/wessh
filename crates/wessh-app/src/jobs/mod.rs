@@ -8,11 +8,11 @@ pub mod video;
 mod worker;
 
 use crate::live::{EngineOptions, Image};
-use crossbeam_channel::Sender;
 use image::SwappedImage;
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 use video::Progress;
@@ -117,7 +117,7 @@ impl JobRunner {
     }
     /// Spawn the (idle) worker. `repaint` is called whenever a job has news.
     pub fn spawn(engine: EngineOptions, repaint: impl Fn() + Send + 'static) -> Self {
-        let (queue, inbox) = crossbeam_channel::unbounded();
+        let (queue, inbox) = std::sync::mpsc::channel();
         let worker = std::thread::Builder::new()
             .name("jobs".into())
             .spawn(move || worker::run(&engine, &inbox, &repaint))

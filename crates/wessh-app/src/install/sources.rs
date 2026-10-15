@@ -122,12 +122,12 @@ pub fn cuda_wheels(cuda_major: u32) -> Vec<Wheel> {
 }
 
 /// The wheel carrying an execution-provider plugin: the plugin, and for TensorRT for RTX its own
-/// TensorRT-RTX and CUDA runtime (the driver provides the rest).
+/// TensorRT-RTX and CUDA runtime (the driver provides the rest), built for `cuda_major`.
 #[must_use]
-pub const fn plugin_wheel(plugin: Plugin) -> Wheel {
+pub const fn plugin_wheel(plugin: Plugin, cuda_major: u32) -> Wheel {
     match plugin {
         Plugin::NvRtx => wheel(
-            "onnxruntime-ep-nv-tensorrt-rtx-cu13",
+            if cuda_major >= 13 { "onnxruntime-ep-nv-tensorrt-rtx-cu13" } else { "onnxruntime-ep-nv-tensorrt-rtx-cu12" },
             "TensorRT for RTX",
             "0.",
             "libonnxruntime_providers_nv_tensorrt_rtx.so",

@@ -51,8 +51,15 @@ Name: "{autodesktop}\wessh"; Filename: "{app}\wessh.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\wessh.exe"; Description: "{cm:LaunchProgram,wessh}"; Flags: nowait postinstall skipifsilent
+; The in-app updater runs this installer silently with /relaunch=yes: reopen the app when done.
+Filename: "{app}\wessh.exe"; Flags: nowait; Check: Relaunch
 
 [Code]
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|no}') = 'yes';
+end;
+
 // The runtime, CUDA libraries and models live in %LOCALAPPDATA%\wessh and can take several GB.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var

@@ -3,9 +3,9 @@ use super::video::{Rendered, VideoJob, render};
 use super::{Finished, Job, JobShared, Queued, Status};
 use crate::live::EngineOptions;
 use anyhow::{Context, Result};
-use crossbeam_channel::Receiver;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use wessh_core::{Engine, Frame, Processor, Settings};
 

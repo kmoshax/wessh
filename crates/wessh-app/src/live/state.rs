@@ -31,7 +31,13 @@ pub struct Snapshot {
     /// The accepted source photo, for offline jobs to load the same face.
     pub source_path: Option<std::path::PathBuf>,
     pub stats: Stats,
+    /// Frames processed per second.
     pub fps: f32,
+    /// Frames the camera delivers per second.
+    pub capture_fps: f32,
+    /// From the camera delivering a frame to the frame being written out (virtual camera and
+    /// preview), smoothed; the camera's exposure and the screen's refresh come on top.
+    pub latency_ms: f32,
     pub output_active: bool,
 }
 

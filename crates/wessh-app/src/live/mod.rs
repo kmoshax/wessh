@@ -8,10 +8,10 @@ mod worker;
 
 pub use state::{Image, Phase, Snapshot};
 
-use crossbeam_channel::Sender;
 use state::Shared;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
 use std::thread::JoinHandle;
 use wessh_core::{Device, Settings};
 use wessh_media::{CameraConfig, OutputTarget};
@@ -40,7 +40,7 @@ pub struct LiveSession {
 impl Drop for LiveSession {
     fn drop(&mut self) {
         // Disconnect the command channel so the worker's loop ends, then wait for it.
-        drop(std::mem::replace(&mut self.commands, crossbeam_channel::unbounded().0));
+        drop(std::mem::replace(&mut self.commands, std::sync::mpsc::channel().0));
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -50,7 +50,7 @@ impl Drop for LiveSession {
 impl LiveSession {
     /// Spawn the worker. `repaint` is called whenever there is something new to show.
     pub fn spawn(engine: EngineOptions, settings: Settings, repaint: impl Fn() + Send + Sync + 'static) -> Self {
-        let (commands, inbox) = crossbeam_channel::unbounded();
+        let (commands, inbox) = std::sync::mpsc::channel();
         let shared = Arc::new(Shared::new(settings));
         let worker_shared = shared.clone();
         let worker = std::thread::Builder::new()

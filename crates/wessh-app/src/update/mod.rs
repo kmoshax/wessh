@@ -1,11 +1,12 @@
-//! Updates from this repository's stable GitHub releases; never touches runtime/model caches.
+//! Updates from this repository's stable GitHub releases; never touches runtime/model caches
+//! (or the TensorRT for RTX kernel cache) in the data directory.
 
 mod apply;
 
 use crate::install::fetch::{self, Download, Transfer};
 use crate::install::platform::{Arch, Os, Target};
 use anyhow::{Context, Result, bail, ensure};
-pub use apply::{Prepared, launch};
+pub use apply::{Prepared, install_and_restart};
 use semver::Version;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -135,9 +136,20 @@ fn checksum(manifest: &str, name: &str) -> Result<String> {
     Ok(hash)
 }
 
+/// Tidy up after an earlier update (see [`apply::clean_up`]); call once on start.
+pub fn clean_up() {
+    let (Ok(exe), Ok(current)) = (std::env::current_exe(), Version::parse(CURRENT)) else { return };
+    let installed = std::env::var_os("APPIMAGE").map_or(exe, PathBuf::from);
+    apply::clean_up(&installed, &updates_dir(), &current);
+}
+
+fn updates_dir() -> PathBuf {
+    wessh_core::assets::data_dir().join("updates")
+}
+
 /// Download and verify, then stage files. Applying them needs a separate explicit action.
 pub fn prepare(update: &Update, cancel: &AtomicBool, progress: &mut dyn FnMut(Transfer)) -> Result<Prepared> {
-    let folder = wessh_core::assets::data_dir().join("updates").join(&update.version);
+    let folder = updates_dir().join(&update.version);
     std::fs::create_dir_all(&folder)?;
     let archive = folder.join(&update.download.file_name);
     fetch::download(&update.download, &archive, cancel, progress)?;

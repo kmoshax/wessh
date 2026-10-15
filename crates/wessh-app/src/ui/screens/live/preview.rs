@@ -116,7 +116,8 @@ fn live_badge(ui: &mut Ui, top_left: eframe::egui::Pos2) {
     ui.ctx().request_repaint();
 }
 
-/// FPS / latency / faces in the top-right, per-stage timings in the bottom-left.
+/// Faces, latency (camera to output) and frame rate (processed / delivered by the camera) in the
+/// top-right, per-stage timings in the bottom-left.
 fn stat_chips(ui: &mut Ui, inner: Rect, frame: &Frame<'_>) {
     let stats = &frame.snapshot.stats;
     let top = Rect::from_min_max(inner.center_top(), inner.right_top() + vec2(0.0, theme::size::TARGET));
@@ -124,8 +125,14 @@ fn stat_chips(ui: &mut Ui, inner: Rect, frame: &Frame<'_>) {
         ui.spacing_mut().item_spacing.x = spacing::SM;
         let faces = if stats.faces == 1 { "1 face".to_owned() } else { format!("{} faces", stats.faces) };
         ui.add(Chip::status(&faces, false).icon(icons::FACE));
-        ui.add(Chip::status(&format!("{:.1} ms", stats.total_ms), false).icon(icons::TIMER));
-        ui.add(Chip::status(&format!("{:.0} fps", frame.snapshot.fps), true).icon(icons::SPEED));
+        let snapshot = &frame.snapshot;
+        ui.add(Chip::status(&format!("{:.0} ms latency", snapshot.latency_ms), false).icon(icons::TIMER));
+        let fps = if snapshot.capture_fps > snapshot.fps + 0.5 {
+            format!("{:.0} / {:.0} fps", snapshot.fps, snapshot.capture_fps)
+        } else {
+            format!("{:.0} fps", snapshot.fps)
+        };
+        ui.add(Chip::status(&fps, true).icon(icons::SPEED));
     });
     let bottom = Rect::from_min_max(inner.left_bottom() - vec2(0.0, theme::size::TARGET), inner.center_bottom());
     ui.scope_builder(UiBuilder::new().max_rect(bottom).layout(Layout::left_to_right(Align::Max)), |ui| {

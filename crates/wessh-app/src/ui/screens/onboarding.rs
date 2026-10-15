@@ -16,6 +16,7 @@ use crate::ui::theme::{self, ColorScheme, TypeRole, shape, size, spacing};
 use eframe::egui::{
     Align, Align2, Color32, Context, Frame, Key, Label, Layout, Margin, Rect, ScrollArea, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
+use wessh_core::Device;
 use wessh_core::assets;
 use wessh_core::runtime::locate;
 
@@ -112,6 +113,15 @@ pub enum Next {
     OpenApp,
 }
 
+/// How the engine is getting on, started as soon as everything is installed.
+#[derive(Clone, Debug)]
+pub struct EngineProgress {
+    /// How long it has been loading, or took to load.
+    pub elapsed: std::time::Duration,
+    pub ready: bool,
+    pub failure: Option<String>,
+}
+
 /// State of the onboarding flow.
 pub struct Onboarding {
     step: Step,
@@ -152,6 +162,13 @@ fn request(options: &Options) -> Request {
 impl Onboarding {
     /// The flow, if something is missing (or `forced` asks for a page anyway, for design review).
     pub fn check(ctx: &Context, options: &Options, forced: Option<Step>) -> Option<Self> {
+        // Already set up: nothing to detect (an explicit `--device` may want another runtime).
+        if forced.is_none()
+            && options.device == Device::Auto
+            && Host::installed().is_some_and(|host| Plan::check(host, &request(options)).is_complete())
+        {
+            return None;
+        }
         let host = match Host::for_device(options.device) {
             Ok(host) => host,
             Err(e) => {
@@ -161,6 +178,9 @@ impl Onboarding {
         };
         let plan = Plan::check(host, &request(options));
         if plan.is_complete() && forced.is_none() {
+            if options.device == Device::Auto {
+                plan.host.remember();
+            }
             return None;
         }
         Some(Self::new(ctx, plan, forced))
@@ -308,8 +328,14 @@ impl Onboarding {
         self.run.as_ref().is_some_and(|(_, job)| *job == Job::Resolve)
     }
 
-    /// Draw the flow over the whole window.
-    pub fn ui(&mut self, root_ui: &mut Ui) -> Next {
+    /// Everything is installed: the engine can start.
+    #[must_use]
+    pub fn is_done(&self) -> bool {
+        self.step == Step::Done
+    }
+
+    /// Draw the flow over the whole window; `engine` once it is starting.
+    pub fn ui(&mut self, root_ui: &mut Ui, engine: Option<&EngineProgress>) -> Next {
         let ctx = &root_ui.ctx().clone();
         self.poll(ctx);
         let now = ctx.input(|i| i.time);
@@ -334,7 +360,7 @@ impl Onboarding {
                     });
                 }
                 Step::Done => centered(ui, column(body, NARROW_WIDTH), "onboarding-done", |ui| {
-                    if Self::done(ui, &colors) {
+                    if Self::done(ui, &colors, engine) {
                         next = Next::OpenApp;
                     }
                 }),
@@ -535,13 +561,30 @@ impl Onboarding {
     // ── Done ─────────────────────────────────────────────────────────────────────
 
     /// Returns `true` when the user moves on to the app.
-    fn done(ui: &mut Ui, colors: &ColorScheme) -> bool {
+    fn done(ui: &mut Ui, colors: &ColorScheme, engine: Option<&EngineProgress>) -> bool {
         hero(ui, icons::TASK_ALT, colors.primary_container, colors.on_primary_container);
         ui.add_space(spacing::LG);
         ui.label(TypeRole::HeadlineMedium.rich("You're all set", colors.on_surface));
         ui.add_space(spacing::SM);
         let body = "wessh is ready. Pick a photo of a face, then start your camera.";
         wrapped(ui, TypeRole::BodyLarge, body, colors.on_surface_variant, Align::Center);
+        ui.add_space(spacing::LG);
+        // The first start builds the models for this GPU (TensorRT for RTX compiles its kernels,
+        // ≈ 9 s on an RTX 4050); later starts reuse that work.
+        if let Some(engine) = engine {
+            let seconds = engine.elapsed.as_secs();
+            let status = match &engine.failure {
+                Some(error) => format!("The engine could not start: {error}"),
+                None if engine.ready => format!("Engine prepared for your hardware in {seconds} s. Later starts are faster."),
+                None => format!("Preparing the engine for your hardware… {seconds} s. This happens once."),
+            };
+            if !engine.ready && engine.failure.is_none() {
+                ui.add(LinearProgress::indeterminate());
+                ui.add_space(spacing::SM);
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            }
+            wrapped(ui, TypeRole::BodyMedium, &status, colors.on_surface_variant, Align::Center);
+        }
         ui.add_space(spacing::XL);
         let open = ui.add(Button::filled("Start using wessh").icon(icons::ARROW_FORWARD)).clicked();
         open || ui.input(|i| i.key_pressed(Key::Enter))

@@ -7,6 +7,8 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub data: Vec<u8>,
+    /// When a camera delivered it, to measure how long it takes to come out the other end.
+    pub captured: Option<std::time::Instant>,
 }
 
 impl std::fmt::Debug for Frame {
@@ -20,7 +22,7 @@ impl Frame {
 
     #[must_use]
     pub fn new(width: usize, height: usize) -> Self {
-        Self { width, height, data: vec![0; width * height * Self::CHANNELS] }
+        Self { width, height, data: vec![0; width * height * Self::CHANNELS], captured: None }
     }
 
     /// Copy `rect` of this frame into `out`, reusing its buffer.
@@ -45,7 +47,7 @@ impl Frame {
         let (width, height) = image.dimensions();
         let mut data = image.as_raw().clone();
         swap_red_blue(&mut data);
-        Self { width: width as usize, height: height as usize, data }
+        Self { width: width as usize, height: height as usize, data, captured: None }
     }
 
     pub fn open(path: &std::path::Path) -> crate::Result<Self> {
@@ -109,7 +111,7 @@ mod tests {
 
     #[test]
     fn crop_into_copies_the_rect() {
-        let f = Frame { width: 3, height: 2, data: (0..18).collect() };
+        let f = Frame { width: 3, height: 2, data: (0..18).collect(), captured: None };
         let mut out = Frame::default();
         f.crop_into(Rect { x: 1, y: 1, width: 2, height: 1 }, &mut out);
         assert_eq!((out.width, out.height, out.data), (2, 1, vec![12, 13, 14, 15, 16, 17]));
@@ -117,7 +119,7 @@ mod tests {
 
     #[test]
     fn mirror_reverses_pixels() {
-        let mut f = Frame { width: 3, height: 1, data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9] };
+        let mut f = Frame { width: 3, height: 1, data: vec![1, 2, 3, 4, 5, 6, 7, 8, 9], captured: None };
         f.mirror();
         assert_eq!(f.data, [7, 8, 9, 4, 5, 6, 1, 2, 3]);
     }

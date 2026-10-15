@@ -19,9 +19,9 @@ pub mod fetch;
 pub mod platform;
 pub mod progress;
 pub mod sources;
+pub mod wheel;
 
 use anyhow::{Context, Result};
-use crossbeam_channel::{Receiver, Sender};
 use fetch::{Cancelled, Download, Transfer};
 use platform::{Choice, Flavour, Gpu, Target};
 use progress::Rate;
@@ -29,6 +29,7 @@ use sources::Wheel;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::Instant;
 use wessh_core::assets::{self, Asset, OccluderModel, SwapModel, data_dir};
@@ -80,6 +81,26 @@ impl Host {
         Ok(Self { target, gpus, choice })
     }
 
+    /// The machine as it was set up, from the runtime flavour recorded at install time, without
+    /// probing its GPUs (on Windows that starts PowerShell, a second or two before the window
+    /// could open). `None` when nothing is recorded.
+    #[must_use]
+    pub fn installed() -> Option<Self> {
+        use clap::ValueEnum;
+        let name = std::fs::read_to_string(locate::default_runtime_dir().join(FLAVOUR_FILE)).ok()?;
+        let flavour = Flavour::from_str(name.trim(), true).ok()?;
+        let choice = Choice { flavour, reason: "installed".to_owned() };
+        Some(Self { target: Target::host().ok()?, gpus: Vec::new(), choice })
+    }
+
+    /// Record this host's runtime flavour for [`Host::installed`].
+    pub fn remember(&self) {
+        use clap::ValueEnum;
+        if let Some(name) = self.choice.flavour.to_possible_value() {
+            let _ = std::fs::write(locate::default_runtime_dir().join(FLAVOUR_FILE), name.get_name());
+        }
+    }
+
     /// Detect the machine and pick the runtime build `device` asks for.
     pub fn for_device(device: wessh_core::Device) -> Result<Self> {
         let target = Target::host()?;
@@ -99,6 +120,14 @@ impl Host {
         };
         self.gpus.iter().find(|g| vendors.contains(&g.vendor)).map(|g| g.name.as_str())
     }
+}
+
+/// Names the runtime flavour installed, beside the runtime library.
+const FLAVOUR_FILE: &str = "flavour";
+
+/// Where the downloaded members of a wheel wait to be installed.
+fn parts_dir(download: &Download) -> PathBuf {
+    downloads_dir().join(format!("{}.parts", download.file_name))
 }
 
 /// What kind of component an item is.
@@ -146,6 +175,8 @@ pub struct Item {
     pub installed: bool,
     /// Where to get it; `None` until resolved (and for installed items).
     pub download: Option<Download>,
+    /// For a wheel: the members actually fetched (see [`wheel`]), once resolved.
+    wheel: Option<wheel::Selection>,
     /// Bytes already downloaded by an earlier, interrupted run.
     pub partial: u64,
 }
@@ -154,7 +185,23 @@ impl Item {
     /// Download size, when known.
     #[must_use]
     pub fn size(&self) -> Option<u64> {
-        self.download.as_ref().and_then(|d| d.size)
+        self.wheel.as_ref().map(wheel::Selection::download_len).or_else(|| self.download.as_ref().and_then(|d| d.size))
+    }
+
+    /// The wheel members to install, and the file name each is installed under.
+    fn select(&self, download: &Download) -> Result<Option<wheel::Selection>> {
+        let size = download.size.context("the wheel's size is unknown")?;
+        match (&self.source, &self.destination) {
+            (Source::Wheel(_), _) => {
+                wheel::Selection::new(&download.url, size, |member| archive::library_file_name(member).map(str::to_owned)).map(Some)
+            }
+            (Source::Ffmpeg, Destination::Program(program)) => {
+                let name = program.file_name().context("program path without a file name")?.to_string_lossy().into_owned();
+                wheel::Selection::new(&download.url, size, |member| member.starts_with(sources::FFMPEG_MEMBER_PREFIX).then(|| name.clone()))
+                    .map(Some)
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Where the download is saved before it is installed.
@@ -195,6 +242,7 @@ impl Plan {
                 source: Source::Runtime(flavour),
                 installed: !pending(ready),
                 download: None,
+                wheel: None,
                 partial: 0,
             });
             if let Some(cuda_major) = flavour.cuda_major() {
@@ -209,12 +257,13 @@ impl Plan {
                         installed: !pending(wheel.is_installed(&cuda_dir, host.target.os)),
                         source: Source::Wheel(wheel),
                         download: None,
+                        wheel: None,
                         partial: 0,
                     });
                 }
             }
             if let Some(plugin) = flavour.plugin() {
-                let wheel = sources::plugin_wheel(plugin);
+                let wheel = sources::plugin_wheel(plugin, platform::rtx_cuda_major(&host.gpus));
                 let dir = locate::plugin_dir(&runtime_dir, plugin);
                 items.push(Item {
                     name: wheel.package.to_owned(),
@@ -225,6 +274,7 @@ impl Plan {
                     destination: Destination::Libraries(dir),
                     source: Source::Wheel(wheel),
                     download: None,
+                    wheel: None,
                     partial: 0,
                 });
             }
@@ -241,6 +291,7 @@ impl Plan {
                 destination: Destination::File(path),
                 source: Source::Model(*asset),
                 download: None,
+                wheel: None,
             });
         }
         if request.ffmpeg && wessh_media::system_ffmpeg().is_none() {
@@ -254,6 +305,7 @@ impl Plan {
                 destination: Destination::Program(path),
                 source: Source::Ffmpeg,
                 download: None,
+                wheel: None,
                 partial: 0,
             });
         }
@@ -395,11 +447,23 @@ pub fn resolve(plan: &mut Plan, reporter: &Reporter) -> Result<()> {
             }
         };
         let item = &mut plan.items[index];
-        item.partial = fetch::file_len(&fetch::partial_path(&item.download_path(&download)));
-        reporter.send(Event::Resolved { item: index, version: version.clone(), size: download.size, partial: item.partial });
-        reporter.send(Event::Stage { item: index, stage: Stage::Queued });
+        let selection = match item.select(&download) {
+            Ok(selection) => selection,
+            Err(e) => {
+                let error = e.context(format!("could not read the contents of {}", download.file_name));
+                reporter.send(Event::Stage { item: index, stage: Stage::Failed(format!("{error:#}")) });
+                return Err(error);
+            }
+        };
+        item.partial = match &selection {
+            Some(selection) => selection.partial_len(&parts_dir(&download)),
+            None => fetch::file_len(&fetch::partial_path(&item.download_path(&download))),
+        };
+        item.wheel = selection;
         item.version = version;
         item.download = Some(download);
+        reporter.send(Event::Resolved { item: index, version: item.version.clone(), size: item.size(), partial: item.partial });
+        reporter.send(Event::Stage { item: index, stage: Stage::Queued });
     }
     Ok(())
 }
@@ -418,6 +482,9 @@ pub fn install(plan: &mut Plan, reporter: &Reporter) -> Result<()> {
     }
     // Only leftovers of interrupted downloads could remain; an empty directory is noise.
     let _ = std::fs::remove_dir(downloads_dir());
+    if plan.items.iter().any(|item| item.kind == Kind::Runtime) {
+        plan.host.remember();
+    }
     Ok(())
 }
 
@@ -434,19 +501,22 @@ fn install_item(item: &mut Item, index: usize, reporter: &Reporter) -> Result<()
         }
         Transfer::Verifying => reporter.send(Event::Stage { item: index, stage: Stage::Verifying }),
     };
-    fetch::download(&download, &path, &reporter.cancel, &mut on_progress)?;
-    match &item.destination {
-        Destination::Libraries(dir) => {
+    if let Some(selection) = item.wheel.clone() {
+        let dir = match &item.destination {
+            Destination::Libraries(dir) => dir.clone(),
+            Destination::Program(program) | Destination::File(program) => program.parent().context("no directory")?.to_path_buf(),
+        };
+        let installed = selection.install(&dir, &parts_dir(&download), &reporter.cancel, &mut |done| on_progress(Transfer::Bytes(done)))?;
+        if matches!(item.destination, Destination::Program(_)) {
+            installed.iter().try_for_each(|path| archive::make_executable(path))?;
+        }
+    } else {
+        fetch::download(&download, &path, &reporter.cancel, &mut on_progress)?;
+        if let Destination::Libraries(dir) = &item.destination {
             reporter.send(Event::Stage { item: index, stage: Stage::Extracting });
             archive::extract_libraries(&path, dir, &reporter.cancel)?;
             std::fs::remove_file(&path)?;
         }
-        Destination::Program(program) => {
-            reporter.send(Event::Stage { item: index, stage: Stage::Extracting });
-            archive::extract_program(&path, sources::FFMPEG_MEMBER_PREFIX, program)?;
-            std::fs::remove_file(&path)?;
-        }
-        Destination::File(_) => {}
     }
     item.installed = true;
     reporter.send(Event::Stage { item: index, stage: Stage::Done });
@@ -494,7 +564,7 @@ impl Drop for Installer {
 impl Installer {
     /// Start `job` on `plan`; `notify` is called after every message (e.g. to repaint).
     pub fn spawn(mut plan: Plan, job: Job, notify: impl Fn() + Send + 'static) -> Self {
-        let (events, messages) = crossbeam_channel::unbounded();
+        let (events, messages) = std::sync::mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let reporter = Reporter { events, cancel: cancel.clone(), notify: Box::new(notify) };
         let thread = std::thread::Builder::new()
