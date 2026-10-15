@@ -7,15 +7,15 @@
 
 use super::layout::{centered, column};
 use crate::cli::Options;
+use crate::install::platform::Flavour;
 use crate::install::progress::{human_duration, human_rate, human_size, time_left};
-use crate::install::{self, Host, Installer, Job, Kind, Message, Outcome, Plan, Request, Stage, platform, sources};
+use crate::install::{self, Host, Installer, Job, Kind, Message, Outcome, Plan, Request, Stage, sources};
 use crate::ui::components::{Button, CircularProgress, LinearProgress, paint};
 use crate::ui::icons;
 use crate::ui::theme::{self, ColorScheme, TypeRole, shape, size, spacing};
 use eframe::egui::{
     Align, Align2, Color32, Context, Frame, Key, Label, Layout, Margin, Rect, ScrollArea, Sense, Stroke, Ui, UiBuilder, pos2, vec2,
 };
-use wessh_core::Device;
 use wessh_core::assets;
 use wessh_core::runtime::locate;
 
@@ -42,16 +42,14 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn automatic_onboarding_does_not_require_tensorrt_or_disabled_masks() {
+    fn automatic_onboarding_does_not_require_disabled_features() {
         let cli = Cli::parse_from(["wessh"]);
         let request = request(&cli.options);
-        assert!(!request.tensorrt);
         assert!(!request.ffmpeg);
-        assert_eq!(request.models.len(), 4);
+        assert_eq!(request.models.len(), 3);
+        assert!(!request.models.contains(&assets::ENHANCER));
         assert!(!request.models.contains(&assets::OccluderModel::default().asset()));
         assert!(!request.models.contains(&wessh_core::face::masker::PARSER_ASSET));
-        let cli = Cli::parse_from(["wessh", "--device", "tensorrt"]);
-        assert!(super::request(&cli.options).tensorrt);
     }
 }
 
@@ -132,18 +130,17 @@ pub struct Onboarding {
     /// Nothing was installed before: a first run rather than an update.
     first_run: bool,
     gpu: Option<String>,
-    flavour: platform::Flavour,
+    flavour: Flavour,
     /// Design review: pause the download at this time (`WESSH_UI_PAUSE_AT`).
     pause_at: Option<f64>,
 }
 
 /// What onboarding installs for these options: the detected runtime (CPU only with
-/// `--device cpu`), explicitly requested TensorRT, and models for enabled features.
+/// `--device cpu`) and models for enabled features.
 fn request(options: &Options) -> Request {
     let runtime = locate::runtime_library(options.ort.as_deref()).ok();
     let external_runtime = runtime.is_some_and(|path| path.parent() != Some(locate::default_runtime_dir().as_path()));
     Request {
-        tensorrt: options.device == Device::Tensorrt,
         ort_version: sources::ORT_VERSION.to_owned(),
         force: false,
         models: assets::required(&options.settings()),
@@ -155,8 +152,7 @@ fn request(options: &Options) -> Request {
 impl Onboarding {
     /// The flow, if something is missing (or `forced` asks for a page anyway, for design review).
     pub fn check(ctx: &Context, options: &Options, forced: Option<Step>) -> Option<Self> {
-        let flavour = (options.device == Device::Cpu).then_some(platform::Flavour::Cpu);
-        let host = match Host::detect(flavour) {
+        let host = match Host::for_device(options.device) {
             Ok(host) => host,
             Err(e) => {
                 eprintln!("skipping setup: {e:#}");
@@ -391,20 +387,22 @@ impl Onboarding {
         {
             ui.label(TypeRole::TitleSmall.rich("wessh will download and set up", colors.on_surface_variant));
             ui.add_space(spacing::XS);
-            if self.has(Kind::Runtime) || self.has(Kind::CudaLibrary) {
-                let title = match (&self.gpu, self.flavour.cuda_major()) {
-                    (Some(gpu), Some(_)) => format!("Engine for your {gpu}"),
-                    _ => "Engine for your processor".to_owned(),
+            let engine = [Kind::Runtime, Kind::CudaLibrary, Kind::Plugin];
+            if engine.iter().any(|&kind| self.has(kind)) {
+                let title = match &self.gpu {
+                    Some(gpu) => format!("Engine for your {gpu}"),
+                    None => "Engine for your processor".to_owned(),
                 };
-                let detail = match self.flavour.cuda_major() {
-                    Some(major) => format!("ONNX Runtime with NVIDIA CUDA {major} and cuDNN"),
-                    None => "ONNX Runtime".to_owned(),
+                let detail = match self.flavour {
+                    Flavour::Cuda12 | Flavour::Cuda13 => {
+                        format!("ONNX Runtime with NVIDIA CUDA {} and cuDNN", self.flavour.cuda_major().unwrap_or_default())
+                    }
+                    Flavour::Rtx => "ONNX Runtime with NVIDIA TensorRT for RTX".to_owned(),
+                    Flavour::Webgpu => "ONNX Runtime with WebGPU".to_owned(),
+                    Flavour::Coreml => "ONNX Runtime with CoreML".to_owned(),
+                    Flavour::Cpu => "ONNX Runtime".to_owned(),
                 };
-                summary_row(ui, icons::MEMORY, &title, &detail, &size(self.size_of(&[Kind::Runtime, Kind::CudaLibrary])));
-            }
-            if self.has(Kind::TensorRt) {
-                let detail = "NVIDIA's fastest inference engine for your GPU";
-                summary_row(ui, icons::BOLT, "TensorRT acceleration", detail, &size(self.size_of(&[Kind::TensorRt])));
+                summary_row(ui, icons::MEMORY, &title, &detail, &size(self.size_of(&engine)));
             }
             if self.has(Kind::Model) {
                 let count = self.shown.iter().filter(|&&i| self.rows[i].kind == Kind::Model).count();
@@ -417,7 +415,7 @@ impl Onboarding {
             ui.horizontal(|ui| {
                 ui.label(TypeRole::TitleMedium.rich("Total", colors.on_surface));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let total = self.size_of(&[Kind::Runtime, Kind::CudaLibrary, Kind::TensorRt, Kind::Model]);
+                    let total = self.size_of(&[Kind::Runtime, Kind::CudaLibrary, Kind::Plugin, Kind::Model]);
                     ui.label(TypeRole::TitleMedium.rich(size(total), colors.on_surface));
                 });
             });

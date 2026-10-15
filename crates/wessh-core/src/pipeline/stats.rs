@@ -4,8 +4,14 @@ use std::ops::{AddAssign, Div};
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Stats {
     pub faces: usize,
-    /// Faces that reused an earlier frame's swap (see `Settings::max_faces_per_frame`).
+    /// Faces that reused an earlier frame's swap (see `Settings::max_faces_per_frame`, and
+    /// async timewarp in live mode).
     pub swaps_reused: usize,
+    /// Swaps not run because the face looked the same as when it was last swapped (live mode).
+    pub swaps_skipped: usize,
+    /// Age of the swapped crops pasted, averaged over the faces: how far the expression trails
+    /// the camera.
+    pub swap_age_ms: f32,
     pub detect_ms: f32,
     pub swap_ms: f32,
     pub enhance_ms: f32,
@@ -37,6 +43,8 @@ impl AddAssign for Stats {
     fn add_assign(&mut self, rhs: Self) {
         self.faces += rhs.faces;
         self.swaps_reused += rhs.swaps_reused;
+        self.swap_age_ms += rhs.swap_age_ms;
+        self.swaps_skipped += rhs.swaps_skipped;
         self.detect_ms += rhs.detect_ms;
         self.swap_ms += rhs.swap_ms;
         self.enhance_ms += rhs.enhance_ms;
@@ -53,11 +61,13 @@ impl AddAssign for Stats {
 impl Div<f32> for Stats {
     type Output = Self;
 
-    /// Average over `n` frames. Mask counts stay totals, so the hit rate is kept exact.
+    /// Average over `n` frames. Mask and skipped-swap counts stay totals, so rates stay exact.
     fn div(self, n: f32) -> Self {
         Self {
             faces: (self.faces as f32 / n).round() as usize,
             swaps_reused: (self.swaps_reused as f32 / n).round() as usize,
+            swap_age_ms: self.swap_age_ms / n,
+            swaps_skipped: self.swaps_skipped,
             detect_ms: self.detect_ms / n,
             swap_ms: self.swap_ms / n,
             enhance_ms: self.enhance_ms / n,
@@ -76,7 +86,10 @@ impl std::fmt::Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "detect {:.2} ms | swap {:.2} ms (", self.detect_ms, self.swap_ms)?;
         if self.swaps_reused > 0 {
-            write!(f, "{} of {} faces reused, ", self.swaps_reused, self.faces)?;
+            write!(f, "{} of {} faces reused, {:.1} ms old, ", self.swaps_reused, self.faces, self.swap_age_ms)?;
+        }
+        if self.swaps_skipped > 0 {
+            write!(f, "{} unchanged swaps skipped, ", self.swaps_skipped)?;
         }
         write!(f, "masks {:.2}", self.mask_ms)?;
         if self.occlusion_ms > 0.0 || self.parser_ms > 0.0 {

@@ -1,7 +1,8 @@
 //! Making a machine ready to run wessh: the ONNX Runtime build for its GPU and driver, NVIDIA's
-//! CUDA / cuDNN / TensorRT libraries from their Python wheels, the curated models
+//! CUDA / cuDNN libraries from their Python wheels, the curated models
 //! ([`wessh_core::assets::required`]) and, for video files and phone cameras only, an ffmpeg when
-//! the machine has none. Used by `wessh setup`, the app's onboarding and the Video screen.
+//! the machine has none — installed the first time one is needed, never up front. Used by
+//! `wessh setup`, the app's onboarding, the Video screen and the `video` / `cam` commands.
 //!
 //! 1. [`Plan::check`] looks at the files on disk only (no network) to find what is missing —
 //!    cheap enough to run on every start-up.
@@ -36,8 +37,6 @@ use wessh_core::runtime::locate;
 /// What to install.
 #[derive(Clone, Debug)]
 pub struct Request {
-    /// Include TensorRT when the runtime is a CUDA build.
-    pub tensorrt: bool,
     /// ONNX Runtime release.
     pub ort_version: String,
     /// Reinstall components that are already present.
@@ -56,7 +55,7 @@ impl Request {
     /// Only an ffmpeg, for the Video screen.
     #[must_use]
     pub fn ffmpeg_only() -> Self {
-        Self { tensorrt: false, ort_version: String::new(), force: false, models: Vec::new(), external_runtime: true, ffmpeg: true }
+        Self { ort_version: String::new(), force: false, models: Vec::new(), external_runtime: true, ffmpeg: true }
     }
 }
 
@@ -81,12 +80,24 @@ impl Host {
         Ok(Self { target, gpus, choice })
     }
 
+    /// Detect the machine and pick the runtime build `device` asks for.
+    pub fn for_device(device: wessh_core::Device) -> Result<Self> {
+        let target = Target::host()?;
+        let gpus = platform::detect_gpus(target);
+        let choice = platform::choose_for_device(target, &gpus, device);
+        Ok(Self { target, gpus, choice })
+    }
+
     /// The GPU the runtime will use, for display.
     #[must_use]
     pub fn gpu_name(&self) -> Option<&str> {
-        let nvidia = self.choice.flavour.cuda_major().is_some();
-        let gpu = if nvidia { self.gpus.iter().find(|g| g.vendor == platform::Vendor::Nvidia) } else { self.gpus.first() };
-        gpu.map(|g| g.name.as_str())
+        let vendors: &[platform::Vendor] = match self.choice.flavour {
+            Flavour::Cuda12 | Flavour::Cuda13 | Flavour::Rtx => &[platform::Vendor::Nvidia],
+            Flavour::Webgpu => &[platform::Vendor::Amd, platform::Vendor::Intel],
+            Flavour::Coreml => &[platform::Vendor::Apple],
+            Flavour::Cpu => return None,
+        };
+        self.gpus.iter().find(|g| vendors.contains(&g.vendor)).map(|g| g.name.as_str())
     }
 }
 
@@ -95,7 +106,8 @@ impl Host {
 pub enum Kind {
     Runtime,
     CudaLibrary,
-    TensorRt,
+    /// An execution-provider plugin (with the libraries it brings).
+    Plugin,
     Model,
     Ffmpeg,
 }
@@ -168,13 +180,12 @@ impl Plan {
     pub fn check(host: Host, request: &Request) -> Self {
         let pending = |ready: bool| request.force || !ready;
         let flavour = host.choice.flavour;
-        let tensorrt = request.tensorrt && flavour.cuda_major().is_some();
         let runtime_dir = locate::default_runtime_dir();
         let mut items = Vec::new();
         if !request.external_runtime {
+            // A CUDA build left from an earlier flavour has the core library but the wrong providers.
             let ready = runtime_dir.join(locate::RUNTIME_LIB).exists()
-                && (flavour.cuda_major().is_none() || locate::has_provider(&runtime_dir, "cuda"))
-                && (!tensorrt || locate::has_provider(&runtime_dir, "tensorrt"));
+                && flavour.cuda_major().is_some() == locate::has_provider(&runtime_dir, "cuda");
             items.push(Item {
                 name: format!("onnxruntime ({flavour})"),
                 label: "ONNX Runtime".to_owned(),
@@ -188,11 +199,11 @@ impl Plan {
             });
             if let Some(cuda_major) = flavour.cuda_major() {
                 let cuda_dir = runtime_dir.join("cuda");
-                for wheel in sources::cuda_wheels(cuda_major, tensorrt) {
+                for wheel in sources::cuda_wheels_for_runtime(cuda_major, &request.ort_version) {
                     items.push(Item {
                         name: wheel.package.to_owned(),
                         label: wheel.label.to_owned(),
-                        kind: if wheel.is_tensorrt() { Kind::TensorRt } else { Kind::CudaLibrary },
+                        kind: Kind::CudaLibrary,
                         version: String::new(),
                         destination: Destination::Libraries(cuda_dir.clone()),
                         installed: !pending(wheel.is_installed(&cuda_dir, host.target.os)),
@@ -201,6 +212,21 @@ impl Plan {
                         partial: 0,
                     });
                 }
+            }
+            if let Some(plugin) = flavour.plugin() {
+                let wheel = sources::plugin_wheel(plugin);
+                let dir = locate::plugin_dir(&runtime_dir, plugin);
+                items.push(Item {
+                    name: wheel.package.to_owned(),
+                    label: wheel.label.to_owned(),
+                    kind: Kind::Plugin,
+                    version: String::new(),
+                    installed: !pending(locate::plugin_library(&runtime_dir, plugin).is_some()),
+                    destination: Destination::Libraries(dir),
+                    source: Source::Wheel(wheel),
+                    download: None,
+                    partial: 0,
+                });
             }
         }
         for asset in &request.models {
@@ -517,9 +543,8 @@ mod tests {
         Host { target: Target { os: Os::Linux, arch: Arch::X86_64 }, gpus: Vec::new(), choice: Choice { flavour, reason: String::new() } }
     }
 
-    fn request(tensorrt: bool) -> Request {
+    fn request() -> Request {
         Request {
-            tensorrt,
             ort_version: sources::ORT_VERSION.to_owned(),
             force: true,
             models: assets::required(&Settings::default()),
@@ -529,22 +554,39 @@ mod tests {
     }
 
     #[test]
-    fn cuda_plan_has_runtime_libraries_tensorrt_and_models() {
-        let plan = Plan::check(host(Flavour::Cuda13), &request(true));
+    fn cuda_plan_has_runtime_libraries_and_models() {
+        let plan = Plan::check(host(Flavour::Cuda13), &request());
         let count = |kind| plan.items.iter().filter(|i| i.kind == kind).count();
         assert_eq!(count(Kind::Runtime), 1);
-        assert_eq!(count(Kind::CudaLibrary), sources::cuda_wheels(13, false).len());
-        assert_eq!(count(Kind::TensorRt), 1);
+        assert_eq!(count(Kind::CudaLibrary), sources::cuda_wheels_for_runtime(13, sources::ORT_VERSION).len());
         assert_eq!(count(Kind::Model), assets::required(&Settings::default()).len());
         assert!(!plan.is_complete());
         assert!(plan.items.iter().all(|i| i.download.is_none()));
     }
 
     #[test]
+    fn cuda_face_setup_does_not_schedule_fft_download() {
+        let plan = Plan::check(host(Flavour::Cuda13), &request());
+        assert_eq!(plan.items.iter().filter(|item| item.kind == Kind::CudaLibrary).count(), 6);
+        assert!(!plan.items.iter().any(|item| item.label == "cuFFT"));
+    }
+
+    #[test]
+    fn plugin_flavours_add_their_plugin_to_the_cpu_runtime() {
+        for (flavour, plugin) in [(Flavour::Rtx, locate::Plugin::NvRtx), (Flavour::Webgpu, locate::Plugin::WebGpu)] {
+            let plan = Plan::check(host(flavour), &request());
+            let kinds: Vec<Kind> = plan.items.iter().map(|i| i.kind).filter(|&k| k != Kind::Model).collect();
+            assert_eq!(kinds, [Kind::Runtime, Kind::Plugin]);
+            let item = plan.items.iter().find(|i| i.kind == Kind::Plugin).unwrap();
+            assert_eq!(item.destination, Destination::Libraries(locate::plugin_dir(&locate::default_runtime_dir(), plugin)));
+        }
+    }
+
+    #[test]
     fn cpu_plan_has_no_gpu_libraries() {
-        let plan = Plan::check(host(Flavour::Cpu), &request(true));
+        let plan = Plan::check(host(Flavour::Cpu), &request());
         assert!(plan.items.iter().all(|i| matches!(i.kind, Kind::Runtime | Kind::Model)));
-        let external = Request { external_runtime: true, ..request(true) };
+        let external = Request { external_runtime: true, ..request() };
         assert!(Plan::check(host(Flavour::Cuda13), &external).items.iter().all(|i| i.kind == Kind::Model));
     }
 
@@ -565,7 +607,7 @@ mod tests {
 
     #[test]
     fn sizes_count_only_what_is_left() {
-        let mut plan = Plan::check(host(Flavour::Cpu), &request(false));
+        let mut plan = Plan::check(host(Flavour::Cpu), &request());
         let download = |size| Download { url: String::new(), file_name: "x".to_owned(), size: Some(size), sha256: None };
         plan.items[0].download = Some(download(100));
         plan.items[0].partial = 40;

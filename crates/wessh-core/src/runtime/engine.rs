@@ -1,12 +1,14 @@
 use super::binding::{Placement, StaticModel};
+use super::locate::Plugin;
 use super::proto::{self, GraphPatch};
 use super::{Model, locate};
 use crate::assets::{Asset, data_dir};
 use crate::{Error, Result};
+use ort::environment::Environment;
 use ort::ep::coreml::{ComputeUnits, ModelFormat};
 use ort::ep::{CUDA, CoreML, ExecutionProvider, ExecutionProviderDispatch, TensorRT, cuda::ConvAlgorithmSearch};
 use ort::session::Session;
-use ort::session::builder::GraphOptimizationLevel;
+use ort::session::builder::{GraphOptimizationLevel, SessionBuilder};
 use std::path::Path;
 
 /// Fixed sizes for a model's symbolic dimensions, and graph edits applied before loading it
@@ -20,8 +22,9 @@ pub struct StaticShapes<'a> {
     pub dimensions: &'a [(&'a str, i64)],
     /// Shapes of the outputs, in order, for outputs whose shape metadata stays symbolic.
     pub outputs: &'a [Vec<usize>],
-    /// Run on the CUDA provider even on the TensorRT backend, for models TensorRT gets wrong
-    /// or doesn't speed up.
+    /// Run on the CUDA provider even on the TensorRT backend, for models TensorRT's fp16 build
+    /// gets wrong or doesn't speed up. TensorRT for RTX keeps each model's own precision and has
+    /// no CUDA provider to fall back to, so it runs every model.
     pub skip_tensorrt: bool,
 }
 
@@ -46,30 +49,56 @@ struct SessionOptions<'a> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum Device {
-    /// Fastest available: TensorRT, then CUDA, then CoreML (macOS), then CPU.
+    /// Fastest available: TensorRT for RTX, TensorRT, CUDA, WebGPU, CoreML (macOS), then CPU.
     #[default]
     Auto,
+    /// NVIDIA TensorRT for RTX plugin.
+    Rtx,
     Tensorrt,
     Cuda,
+    /// WebGPU plugin (AMD / Intel GPUs).
+    Webgpu,
     /// Apple's CoreML (GPU / Neural Engine), macOS only.
     Coreml,
     Cpu,
 }
 
+impl Device {
+    /// Whether this request may end up on `plugin`.
+    const fn allows(self, plugin: Plugin) -> bool {
+        matches!((self, plugin), (Self::Auto, _) | (Self::Rtx, Plugin::NvRtx) | (Self::Webgpu, Plugin::WebGpu))
+    }
+}
+
 /// Backend actually in use after probing what's installed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
+    NvRtx,
     TensorRt,
     Cuda,
+    WebGpu,
     CoreMl,
     Cpu,
+}
+
+impl Backend {
+    /// The plugin this backend runs on.
+    const fn plugin(self) -> Option<Plugin> {
+        match self {
+            Self::NvRtx => Some(Plugin::NvRtx),
+            Self::WebGpu => Some(Plugin::WebGpu),
+            Self::TensorRt | Self::Cuda | Self::CoreMl | Self::Cpu => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::NvRtx => "TensorRT for RTX",
             Self::TensorRt => "TensorRT",
             Self::Cuda => "CUDA",
+            Self::WebGpu => "WebGPU",
             Self::CoreMl => "CoreML",
             Self::Cpu => "CPU",
         })
@@ -98,6 +127,8 @@ impl Engine {
             .with_name("wessh")
             .commit();
 
+        // The first usable plugin in order of preference, registered with the environment.
+        let plugin = Plugin::ALL.into_iter().filter(|&p| device.allows(p)).find(|&p| register_plugin(runtime_dir, p));
         let cuda = wants_cuda && locate::has_provider(runtime_dir, "cuda");
         let tensorrt = cuda
             && matches!(device, Device::Auto | Device::Tensorrt)
@@ -107,10 +138,14 @@ impl Engine {
         let coreml = cfg!(target_os = "macos")
             && matches!(device, Device::Auto | Device::Coreml)
             && CoreML::default().is_available().unwrap_or(false);
-        let backend = if tensorrt {
+        let backend = if plugin == Some(Plugin::NvRtx) {
+            Backend::NvRtx
+        } else if tensorrt {
             Backend::TensorRt
         } else if cuda {
             Backend::Cuda
+        } else if plugin == Some(Plugin::WebGpu) {
+            Backend::WebGpu
         } else if coreml {
             Backend::CoreMl
         } else {
@@ -182,9 +217,12 @@ impl Engine {
         Err(last.expect("the last provider's error is kept"))
     }
 
+    /// Plugins are fed from host memory: `ort` copies into device tensors through the built-in
+    /// CUDA provider, which the CPU build they run on lacks.
     const fn placement(&self) -> Placement {
         match self.backend {
             Backend::Cpu | Backend::CoreMl => Placement::Host,
+            Backend::NvRtx | Backend::WebGpu => Placement::Staged,
             Backend::Cuda | Backend::TensorRt => Placement::Device,
         }
     }
@@ -197,7 +235,7 @@ impl Engine {
     /// A session for the model at `path`, or for `bytes` (a patched copy of it) when given.
     fn session(&self, path: &Path, bytes: Option<&[u8]>, options: &SessionOptions<'_>, dimensions: &[(&str, i64)]) -> ort::Result<Session> {
         // CUDA runs whole graphs on the GPU; CoreML may leave nodes on the CPU, which want threads.
-        let gpu = matches!(self.backend, Backend::Cuda | Backend::TensorRt);
+        let gpu = matches!(self.backend, Backend::Cuda | Backend::TensorRt | Backend::NvRtx | Backend::WebGpu);
         let mut builder = Session::builder()?;
         for &(name, size) in dimensions {
             builder = builder.with_dimension_override(name, size).map_err(ort::Error::<()>::from)?;
@@ -211,9 +249,11 @@ impl Engine {
             .with_optimization_level(GraphOptimizationLevel::All)
             .map_err(ort::Error::<()>::from)?
             .with_intra_threads(if gpu { 1 } else { self.cpu_threads })
-            .map_err(ort::Error::<()>::from)?
-            .with_execution_providers(self.execution_providers(options))
             .map_err(ort::Error::<()>::from)?;
+        builder = match self.backend.plugin() {
+            Some(plugin) => with_plugin(builder, plugin, options)?,
+            None => builder.with_execution_providers(self.execution_providers(options)).map_err(ort::Error::<()>::from)?,
+        };
         match bytes {
             Some(bytes) => builder.commit_from_memory(bytes),
             None => builder.commit_from_file(path),
@@ -259,9 +299,53 @@ impl Engine {
             Backend::TensorRt if options.tensorrt => vec![tensorrt(), cuda()],
             Backend::TensorRt | Backend::Cuda => vec![cuda()],
             Backend::CoreMl => vec![coreml()],
-            Backend::Cpu => Vec::new(),
+            Backend::Cpu | Backend::NvRtx | Backend::WebGpu => Vec::new(),
         }
     }
+}
+
+/// Load `plugin` from beside the runtime into the environment; `true` when it found a device to
+/// run on. The TensorRT for RTX plugin brings versioned libraries without the symlinks the
+/// loader looks for (`libtensorrt_rtx.so.1`), so they are preloaded like the CUDA ones.
+fn register_plugin(runtime_dir: &Path, plugin: Plugin) -> bool {
+    let Some(library) = locate::plugin_library(runtime_dir, plugin) else { return false };
+    if let Some(dir) = library.parent() {
+        locate::preload_libraries(dir);
+    }
+    let registered = Environment::current().and_then(|env| {
+        // Plugins name their devices' provider after the name they are registered under.
+        env.register_ep_library(plugin.ep_name(), &library)?;
+        Ok(env.devices().any(|device| device.ep().is_ok_and(|ep| ep == plugin.ep_name())))
+    });
+    match registered {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("{}: could not load ({e}); skipping", library.display());
+            false
+        }
+    }
+}
+
+/// Attach `plugin`'s devices to the session, with its options.
+fn with_plugin(builder: SessionBuilder, plugin: Plugin, options: &SessionOptions<'_>) -> ort::Result<SessionBuilder> {
+    let env = Environment::current()?;
+    let key = |name: &str| format!("{}.{name}", plugin.ep_name());
+    let settings = match plugin {
+        Plugin::NvRtx => {
+            // TensorRT for RTX compiles kernels for this GPU on first use and keeps them here.
+            let cache = data_dir().join("rtx_cache");
+            let _ = std::fs::create_dir_all(&cache);
+            vec![
+                (key("nv_runtime_cache_path"), cache.to_string_lossy().into_owned()),
+                (key("enable_cuda_graph"), if options.cuda_graph { "1" } else { "0" }.to_owned()),
+            ]
+        }
+        Plugin::WebGpu => Vec::new(),
+    };
+    // One device per session: the WebGPU plugin refuses more (and picks the adapter itself), and
+    // a model runs on one GPU anyway.
+    let device = env.devices().find(|device| device.ep().is_ok_and(|ep| ep == plugin.ep_name()));
+    builder.with_devices(device, Some(&settings)).map_err(ort::Error::<()>::from)
 }
 
 /// TensorRT engine cache prefix for `asset` with `dimensions` pinned (and a patched graph).

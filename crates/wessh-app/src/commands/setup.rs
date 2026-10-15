@@ -1,14 +1,15 @@
 //! `wessh setup`: one command that makes a machine ready to run wessh.
 //!
 //! Installs the ONNX Runtime build for the GPU and driver into `<data dir>/ort/lib`, NVIDIA's
-//! CUDA / cuDNN libraries (optionally TensorRT) into `<data dir>/ort/lib/cuda`, and enabled models into
+//! CUDA / cuDNN libraries into `<data dir>/ort/lib/cuda`, and enabled models into
 //! `<data dir>/models` — the same set the app's onboarding installs (see [`crate::install`]).
+//! ffmpeg is not part of it: `video` and `cam --camera <url>` install one when they first need it.
 //! Every step is skipped when already done, downloads resume, and checksums are verified
 //! whenever the source publishes one.
 
 use crate::cli::{Options, SetupArgs};
 use crate::install::progress::{human_duration, human_rate, human_size, time_left};
-use crate::install::{Event, Host, Installer, Job, Message, Outcome, Plan, Request, Stage, platform};
+use crate::install::{Event, Host, Installer, Job, Message, Outcome, Plan, Request, Stage};
 use anyhow::{Result, bail};
 use std::io::Write as _;
 use wessh_core::assets::{self, data_dir};
@@ -16,12 +17,11 @@ use wessh_core::assets::{self, data_dir};
 pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
     let host = Host::detect(args.flavour)?;
     let request = Request {
-        tensorrt: !args.no_tensorrt && (args.tensorrt || options.device == wessh_core::Device::Tensorrt),
         ort_version: args.ort_version.clone(),
         force: args.force,
         models: if args.no_models { Vec::new() } else { assets::required(&options.settings()) },
         external_runtime: false,
-        ffmpeg: true,
+        ffmpeg: false,
     };
 
     println!("data dir   {}", data_dir().display());
@@ -39,16 +39,23 @@ pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
     let plan = if args.dry_run || plan.is_complete() { plan } else { run_job(plan, Job::Install)? };
     debug_assert!(args.dry_run || plan.is_complete());
 
-    println!();
-    if let Some(version) = platform::ffmpeg_version() {
-        println!("ffmpeg     {version}");
-    }
     if args.dry_run {
         println!("\ndry run: nothing was downloaded or changed");
     } else {
         println!("\nready. `wessh doctor` checks the installation; `wessh` opens the app");
     }
     Ok(())
+}
+
+/// Install an ffmpeg when there is none: video files and network cameras need one, live webcam
+/// mode doesn't, so it is fetched on first use rather than by `setup`.
+pub fn ensure_ffmpeg() -> Result<()> {
+    if wessh_media::find_ffmpeg().is_some() {
+        return Ok(());
+    }
+    eprintln!("this needs ffmpeg, which isn't installed; downloading it once (about 30 MB)");
+    let plan = Plan::check(Host::detect(None)?, &Request::ffmpeg_only());
+    run_job(plan, Job::Install).map(drop)
 }
 
 /// Run `job` on the installer thread, printing its progress.

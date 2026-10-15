@@ -7,7 +7,15 @@ pub type Landmarks5 = [Point; 5];
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Affine(pub [f32; 6]);
 
+impl Default for Affine {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
 impl Affine {
+    pub const IDENTITY: Self = Self([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+
     #[must_use]
     pub fn apply(&self, p: Point) -> Point {
         let m = &self.0;

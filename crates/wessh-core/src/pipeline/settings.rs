@@ -72,7 +72,7 @@ impl Default for Settings {
             max_faces_per_frame: 0,
             face_order: FaceOrder::default(),
             reference_distance: 0.6,
-            enhance: true,
+            enhance: false,
             enhance_blend: 1.0,
             stabilize: true,
             mask_blur: 0.3,

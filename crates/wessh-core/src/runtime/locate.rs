@@ -1,10 +1,13 @@
-//! Finding the ONNX Runtime library and the optional CUDA / TensorRT redistributables.
+//! Finding the ONNX Runtime library, the optional CUDA redistributables and execution-provider
+//! plugins.
 //!
 //! Portable layout (everything relative to the ONNX Runtime library directory):
 //! ```text
 //! lib/libonnxruntime.so
-//! lib/libonnxruntime_providers_{cuda,tensorrt,shared}.so
-//! lib/cuda/     CUDA runtime, cuBLAS, cuFFT, cuRAND, cuDNN, (TensorRT) libraries
+//! lib/libonnxruntime_providers_{cuda,tensorrt,shared}.so    CUDA builds only
+//! lib/cuda/              CUDA runtime, cuBLAS, cuRAND, cuDNN libraries
+//! lib/plugins/nvrtx/     TensorRT for RTX plugin with its own TensorRT-RTX and CUDA runtime
+//! lib/plugins/webgpu/    WebGPU plugin
 //! ```
 
 use crate::assets::data_dir;
@@ -49,6 +52,62 @@ pub fn has_provider(runtime_dir: &Path, name: &str) -> bool {
         format!("libonnxruntime_providers_{name}.so")
     };
     runtime_dir.join(file).exists()
+}
+
+/// An execution provider shipped as a separate library on ONNX Runtime's plugin EP ABI, loaded
+/// into the CPU build at start-up rather than compiled into the runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Plugin {
+    /// NVIDIA TensorRT for RTX (`onnxruntime-ep-nv-tensorrt-rtx-cu13`): needs only the driver.
+    NvRtx,
+    /// WebGPU over Vulkan / D3D12 / Metal (`onnxruntime-ep-webgpu`), for AMD and Intel GPUs.
+    WebGpu,
+}
+
+impl Plugin {
+    pub const ALL: [Self; 2] = [Self::NvRtx, Self::WebGpu];
+
+    /// Directory under `plugins/` holding the plugin and the libraries it brings.
+    #[must_use]
+    pub const fn dir_name(self) -> &'static str {
+        match self {
+            Self::NvRtx => "nvrtx",
+            Self::WebGpu => "webgpu",
+        }
+    }
+
+    /// File name of the plugin library on this platform.
+    #[must_use]
+    pub const fn library(self) -> &'static str {
+        match self {
+            Self::NvRtx if cfg!(target_os = "windows") => "onnxruntime_providers_nv_tensorrt_rtx.dll",
+            Self::NvRtx => "libonnxruntime_providers_nv_tensorrt_rtx.so",
+            Self::WebGpu if cfg!(target_os = "windows") => "onnxruntime_providers_webgpu.dll",
+            Self::WebGpu if cfg!(target_os = "macos") => "libonnxruntime_providers_webgpu.dylib",
+            Self::WebGpu => "libonnxruntime_providers_webgpu.so",
+        }
+    }
+
+    /// Name the plugin's devices report as their execution provider.
+    #[must_use]
+    pub const fn ep_name(self) -> &'static str {
+        match self {
+            Self::NvRtx => "NvTensorRTRTXExecutionProvider",
+            Self::WebGpu => "WebGpuExecutionProvider",
+        }
+    }
+}
+
+/// Where `plugin` is installed beside the runtime library.
+#[must_use]
+pub fn plugin_dir(runtime_dir: &Path, plugin: Plugin) -> PathBuf {
+    runtime_dir.join("plugins").join(plugin.dir_name())
+}
+
+/// The plugin library, when it is installed beside the runtime library.
+#[must_use]
+pub fn plugin_library(runtime_dir: &Path, plugin: Plugin) -> Option<PathBuf> {
+    Some(plugin_dir(runtime_dir, plugin).join(plugin.library())).filter(|path| path.is_file())
 }
 
 /// Directory with bundled CUDA libraries (`$WESSH_CUDA_DIR`, or `cuda/` beside the runtime).

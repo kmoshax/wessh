@@ -10,6 +10,7 @@ use wessh_media::{Encoder, probe};
 const REPORT_EVERY: u64 = 30;
 
 pub fn run(options: &Options, source: &[PathBuf], target: &str, output: &str, encoder: Option<String>) -> Result<()> {
+    super::setup::ensure_ffmpeg()?;
     let info = probe(target)?;
     let encoder = encoder.map_or_else(Encoder::best_available, Encoder);
     eprintln!("{}x{} @ {:.2} fps, encoder {}", info.width, info.height, info.fps, encoder.0);

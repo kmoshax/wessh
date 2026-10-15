@@ -1,15 +1,34 @@
+use super::async_swap::{self, AsyncSwap, SharedSwapper};
+use super::flow::LandmarkFlow;
 use super::pixel_boost::{self, Swapped};
 use super::reuse::SwapReuse;
 use super::tracker::{FaceTracker, TrackingDetector};
-use super::{FaceOrder, FaceSmoother, Settings, Stats, select};
+use super::{FaceOrder, Settings, Stats, select};
+use crate::assets::SwapModel;
 use crate::face::masker::{MASK_SIZE, compose_into};
 use crate::face::{AlignedCrop, Detector, Embedding, Enhancer, Face, Masker, Recognizer, Swapper};
 use crate::geometry::{Affine, Rect, Template};
-use crate::image::{Frame, Padding, box_mask, detail, face_mask, match_color, paste_back, warp_crop, warp_plane_into};
+use crate::image::{Frame, Padding, box_mask, detail, face_mask, match_color, paste_back, warp_crop, warp_crop_into, warp_plane_into};
 use crate::runtime::{Backend, Engine};
 use crate::{Error, Result};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// A face whose every 16 px block changed by less than this (0–255, see [`SwapReuse::change`])
+/// since its last swap is not swapped again: the swap would come out the same. A still face
+/// measures 0 through the swap's own alignment and a repeated video frame under 2, while
+/// talking, blinking and turning measure 7 and up (`demo.gif` played live).
+const SAME_FACE_CHANGE: f32 = 3.0;
+/// A face is swapped again at least this often however still it is, so a slow change (light
+/// fading, the camera's exposure settling) can't build up unnoticed.
+const MAX_SWAP_AGE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Async timewarp ([`super::async_swap`]) in live mode, unless `WESSH_TIMEWARP=0` (to measure
+/// the synchronous pipeline).
+fn timewarp_enabled() -> bool {
+    std::env::var("WESSH_TIMEWARP").map_or(true, |v| v != "0")
+}
 
 /// Geometric paste masks: an ellipse for swapped faces, a feathered box for restored ones
 /// (whose whole crop is the same face, just sharper).
@@ -106,15 +125,20 @@ pub struct Processor {
     engine: Engine,
     detector: Detector,
     recognizer: Recognizer,
-    swapper: Option<Swapper>,
+    swapper: SharedSwapper,
+    /// The model in `swapper`, known without locking it (the swap thread holds the lock while it
+    /// runs).
+    swap_model: Option<SwapModel>,
+    /// Live mode's swap thread, started on the first live frame.
+    async_swap: Option<AsyncSwap>,
     enhancer: Option<Enhancer>,
     masker: Masker,
     identity: Option<Embedding>,
     /// `identity` converted for the current swapper.
-    condition: Option<Vec<f32>>,
+    condition: Option<Arc<[f32]>>,
     /// Only faces like this one are swapped, when set.
     reference: Option<Embedding>,
-    smoother: FaceSmoother,
+    flow: LandmarkFlow,
     tracker: FaceTracker,
     shape_masks: ShapeMasks,
     paste_mask: PasteMask,
@@ -124,7 +148,6 @@ pub struct Processor {
     fresh: Vec<bool>,
     /// A reused face's crop being pasted.
     reused_crop: Vec<u8>,
-    last_frame: Option<Instant>,
 }
 
 impl Processor {
@@ -133,13 +156,15 @@ impl Processor {
             detector: Detector::new(&engine)?,
             recognizer: Recognizer::new(&engine)?,
             engine,
-            swapper: None,
+            swapper: Arc::new(Mutex::new(None)),
+            swap_model: None,
+            async_swap: None,
             enhancer: None,
             masker: Masker::default(),
             identity: None,
             condition: None,
             reference: None,
-            smoother: FaceSmoother::default(),
+            flow: LandmarkFlow::default(),
             tracker: FaceTracker::default(),
             shape_masks: ShapeMasks(VecDeque::with_capacity(MASK_CACHE)),
             paste_mask: PasteMask::default(),
@@ -147,7 +172,6 @@ impl Processor {
             restoration: Restoration::default(),
             fresh: Vec::new(),
             reused_crop: Vec::new(),
-            last_frame: None,
         })
     }
 
@@ -166,8 +190,9 @@ impl Processor {
     pub fn set_sources(&mut self, images: &[Frame]) -> Result<()> {
         let embeddings = images.iter().map(|image| self.largest_face_identity(image)).collect::<Result<Vec<_>>>()?;
         let identity = Embedding::average(&embeddings).ok_or(Error::NoSourceFace)?;
-        self.condition = self.swapper.as_ref().map(|s| s.condition(&identity));
+        self.condition = async_swap::lock(&self.swapper).as_ref().map(|s| s.condition(&identity).into());
         self.identity = Some(identity);
+        self.reuse.invalidate_all();
         Ok(())
     }
 
@@ -197,11 +222,13 @@ impl Processor {
 
     /// Load every model `settings` needs, so the first frame isn't slow.
     pub fn prepare(&mut self, settings: &Settings) -> Result<()> {
-        if self.swapper.as_ref().map(Swapper::kind) != Some(settings.swap_model) {
-            self.swapper = None; // free VRAM before loading the replacement
+        if self.swap_model != Some(settings.swap_model) {
+            let mut current = async_swap::lock(&self.swapper);
+            (*current, self.swap_model) = (None, None); // free VRAM before loading the replacement
             let swapper = Swapper::new(&self.engine, settings.swap_model)?;
-            self.condition = self.identity.as_ref().map(|id| swapper.condition(id));
-            self.swapper = Some(swapper);
+            self.condition = self.identity.as_ref().map(|id| swapper.condition(id).into());
+            (*current, self.swap_model) = (Some(swapper), Some(settings.swap_model));
+            self.reuse.invalidate_all();
         }
         self.detector.prepare(settings.detector_size)?;
         self.detector.prepare(self.tracker.config.region_size)?;
@@ -234,12 +261,20 @@ impl Processor {
             if faces.len() != self.restoration.amounts.len() {
                 self.restoration.amounts.clear();
             }
-            let budget = if live { settings.max_faces_per_frame } else { 0 };
+            let timewarp = live && timewarp_enabled();
+            let budget = if live && !timewarp { settings.max_faces_per_frame } else { 0 };
             self.reuse.plan(&faces, budget, size, &mut self.fresh);
+            if timewarp {
+                self.timewarp(frame, &faces, &condition, size, &mut stats)?;
+            }
             for (index, face) in faces.iter().enumerate() {
                 let fresh = self.fresh[index];
                 stats.swaps_reused += usize::from(!fresh);
                 self.swap_face(index, frame, face, &condition, settings, &mut stats, live, fresh)?;
+            }
+            if !faces.is_empty() {
+                let ages = (0..faces.len()).filter_map(|index| self.reuse.age(index)).map(|age| age.as_secs_f32() * 1000.0);
+                stats.swap_age_ms = ages.sum::<f32>() / faces.len() as f32;
             }
             stats.swap_ms = elapsed_ms(swap_started);
             let masks = self.masker.stats();
@@ -291,6 +326,41 @@ impl Processor {
         Ok(stats)
     }
 
+    /// Async timewarp's part of a frame: land the swap that finished, mark the faces without a
+    /// crop to be swapped right away (`fresh`), and hand the next face to the swap thread. Runs
+    /// before anything is pasted, so the crop handed over is the camera's.
+    fn timewarp(&mut self, frame: &Frame, faces: &[Face], condition: &Arc<[f32]>, size: usize, stats: &mut Stats) -> Result<()> {
+        if self.async_swap.is_none() {
+            self.async_swap = Some(AsyncSwap::spawn(self.swapper.clone())?);
+        }
+        let worker = self.async_swap.as_mut().expect("started above");
+        if let Some(done) = worker.take() {
+            let pixels = done.pixels?;
+            if done.size == size {
+                self.reuse.store_if_current(done.slot, done.generation, &pixels, &done.original, &done.to_crop, size, done.taken);
+            }
+            worker.recycle(done.original);
+        }
+        for (index, fresh) in self.fresh.iter_mut().enumerate() {
+            *fresh = !self.reuse.is_valid(index);
+        }
+        if !worker.is_busy() && !faces.is_empty() {
+            let next = self.reuse.next_turn(faces.len());
+            // A face swapped synchronously this frame needn't go again, nor one that hasn't changed.
+            let unchanged = self.reuse.change(next, frame).is_some_and(|change| change < SAME_FACE_CHANGE)
+                && self.reuse.age(next).is_some_and(|age| age < MAX_SWAP_AGE);
+            stats.swaps_skipped += usize::from(unchanged);
+            if !self.fresh[next] && !unchanged {
+                let to_crop = Template::Arcface128.align(&faces[next].landmarks, size);
+                let mut crop = worker.buffer();
+                crop.resize(size * size * Frame::CHANNELS, 0);
+                warp_crop_into(frame, &to_crop, size, &mut crop);
+                worker.submit(next, self.reuse.generation(next), condition, crop, to_crop, size);
+            }
+        }
+        Ok(())
+    }
+
     /// Swap face number `index` into `frame` — afresh, or with its last swap when not `fresh`;
     /// its model mask stays in the masker for the enhancer.
     #[expect(clippy::too_many_arguments, reason = "one call site; the arguments are the frame's context")]
@@ -305,11 +375,13 @@ impl Processor {
         live: bool,
         fresh: bool,
     ) -> Result<()> {
-        let swapper = self.swapper.as_mut().expect("prepared");
-        let size = pixel_boost::boosted_size(swapper.kind().resolution(), settings.pixel_boost);
+        let size = pixel_boost::boosted_size(settings.swap_model.resolution(), settings.pixel_boost);
         let Swapped { mut face, original } = if fresh {
-            let swapped = pixel_boost::swap(swapper, frame, &target.landmarks, condition, size)?;
-            self.reuse.store(index, &swapped.face.pixels, size);
+            // Waits for a swap the swap thread has in flight.
+            let mut swapper = async_swap::lock(&self.swapper);
+            let swapped = pixel_boost::swap(swapper.as_mut().expect("prepared"), frame, &target.landmarks, condition, size)?;
+            drop(swapper);
+            self.reuse.store(index, &swapped.face.pixels, &swapped.original, &swapped.face.to_crop, size);
             swapped
         } else {
             // The last swap, pasted through the face's current alignment.
@@ -351,13 +423,10 @@ impl Processor {
         let mut faces = select(faces, similarities.as_deref(), 1.0 - settings.reference_distance, settings.face_order, settings.many_faces);
         // Follow the raw (unsmoothed) positions of the faces being swapped.
         self.tracker.track(if live { &faces } else { &[] });
-        let now = Instant::now();
-        let dt = self.last_frame.map_or(1.0 / 30.0, |t| (now - t).as_secs_f32());
-        self.last_frame = Some(now);
         if live && settings.stabilize {
-            self.smoother.smooth(&mut faces, dt);
+            self.flow.refine(frame, &mut faces);
         } else {
-            self.smoother.reset();
+            self.flow.reset();
         }
         Ok(faces)
     }

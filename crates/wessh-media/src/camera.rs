@@ -70,6 +70,12 @@ impl Camera {
         }
     }
 
+    /// Whether capturing from `device` goes through ffmpeg (anything but a local camera).
+    #[must_use]
+    pub fn needs_ffmpeg(device: &str) -> bool {
+        native_index(device).is_none() || is_network_source(device)
+    }
+
     fn start_native(index: u32, config: &CameraConfig, output: Arc<LatestFrame>) -> Result<Self> {
         let (stop, last_error) = (Arc::new(AtomicBool::new(false)), Arc::new(Mutex::new(None)));
         let (stopped, failure, config_copy) = (stop.clone(), last_error.clone(), config.clone());

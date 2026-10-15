@@ -59,7 +59,14 @@ impl Updater {
     /// The application bar shows an update action when a new release is available.
     pub fn button(&mut self, ui: &mut Ui) {
         let clicked = if self.update.is_some() {
-            ui.add(Button::text("Update available").icon(icons::DOWNLOAD)).clicked()
+            let label = if self.prepared.is_some() {
+                "Update ready"
+            } else if self.downloading.is_some() {
+                "Downloading update…"
+            } else {
+                "Update available"
+            };
+            ui.add(Button::text(label).icon(icons::DOWNLOAD)).clicked()
         } else {
             ui.add(IconButton::new(icons::REFRESH, "Check for updates")).clicked()
         };
@@ -125,6 +132,18 @@ impl Updater {
         }
     }
 
+    fn show_download_info(&self, ui: &mut Ui, update: &Update) {
+        let colors = theme::colors(ui.ctx());
+        ui.add_space(spacing::MD);
+        if let Some(size) = update.download.size {
+            ui.label(format!("Download size: {}", human_size(size)));
+        }
+        if self.cancel.load(Ordering::Relaxed) {
+            ui.label("Download paused. Your progress is saved; retry to resume.");
+        }
+        ui.label(TypeRole::BodySmall.rich("Updates come from GitHub and are verified with SHA-256.", colors.on_surface_variant));
+    }
+
     /// `true` requests a clean app shutdown after the update helper has been started.
     pub fn ui(&mut self, ctx: &Context, busy: bool) -> bool {
         self.poll();
@@ -168,17 +187,11 @@ impl Updater {
                     } else if verifying {
                         "Verifying and preparing the update…".to_owned()
                     } else {
-                        format!("{} downloaded", human_size(done))
+                        download_detail(done, update.download.size)
                     };
                     ui.label(detail);
                 } else {
-                    ui.add_space(spacing::MD);
-                    if let Some(size) = update.download.size {
-                        ui.label(format!("Download size: {}", human_size(size)));
-                    }
-                    ui.label(
-                        TypeRole::BodySmall.rich("Updates come from GitHub and are verified with SHA-256.", colors.on_surface_variant),
-                    );
+                    self.show_download_info(ui, update);
                 }
             } else if self.checking.is_running() {
                 ui.add(LinearProgress::indeterminate());
@@ -235,4 +248,11 @@ impl Drop for Updater {
             let _ = thread.join();
         }
     }
+}
+
+fn download_detail(done: u64, total: Option<u64>) -> String {
+    total.filter(|&size| size > 0).map_or_else(
+        || format!("{} downloaded", human_size(done)),
+        |size| format!("{} / {} · {:.0}%", human_size(done.min(size)), human_size(size), (done as f64 / size as f64 * 100.0).min(100.0)),
+    )
 }

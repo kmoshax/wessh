@@ -51,7 +51,11 @@ fn curl() -> Command {
 }
 
 fn run(cmd: &mut Command, url: &str) -> Result<Vec<u8>> {
-    let output = cmd.output().context("could not run curl; install it and retry")?;
+    // Metadata is small: cap retries and the entire attempt so offline checks cannot hang.
+    let output = cmd
+        .args(["--max-time", "20", "--retry", "2", "--retry-max-time", "30"])
+        .output()
+        .context("could not run curl; install it and retry")?;
     if !output.status.success() {
         bail!("request to {url} failed: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
@@ -108,8 +112,15 @@ pub fn normalize_sha256(text: &str) -> Option<String> {
 /// times; after that, or on any other failure, the partial file is kept so a later call resumes
 /// it. Setting `cancel` stops curl and returns [`Cancelled`].
 pub fn download(item: &Download, dest: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(Transfer)) -> Result<()> {
-    if dest.exists() && verify(item, dest, cancel, progress).is_ok() {
-        return Ok(());
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Cancelled.into());
+    }
+    if dest.exists() {
+        match verify(item, dest, cancel, progress) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.is::<Cancelled>() => return Err(error),
+            Err(_) => {}
+        }
     }
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir)?;
@@ -137,6 +148,10 @@ pub fn download(item: &Download, dest: &Path, cancel: &AtomicBool, progress: &mu
         }
         std::fs::remove_file(&partial)?;
         return Err(e.context("the downloaded file was damaged and has been discarded; try again"));
+    }
+    // Windows cannot rename over an existing file. Keep it until its replacement is verified.
+    if dest.exists() {
+        std::fs::remove_file(dest)?;
     }
     std::fs::rename(&partial, dest)?;
     Ok(())
@@ -265,6 +280,43 @@ mod tests {
         assert_eq!(normalize_sha256(&format!("sha256:{}", HASH.to_uppercase())).as_deref(), Some(HASH));
         assert_eq!(normalize_sha256("d1a5fa81"), None);
         assert_eq!(normalize_sha256(&"z".repeat(SHA256_HEX_LEN)), None);
+    }
+
+    #[test]
+    fn repairs_corrupt_cached_file_from_verified_partial_without_network() {
+        let dir = std::env::temp_dir().join(format!("wessh-fetch-repair-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("model");
+        std::fs::write(&file, "bad").unwrap();
+        std::fs::write(partial_path(&file), "abc").unwrap();
+        let item = Download {
+            url: "http://127.0.0.1:0/unreachable".into(),
+            file_name: "model".into(),
+            size: Some(3),
+            sha256: Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad".into()),
+        };
+        download(&item, &file, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"abc");
+        assert!(!partial_path(&file).exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancellation_preserves_existing_and_partial_files() {
+        let dir = std::env::temp_dir().join(format!("wessh-fetch-cancel-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("model");
+        std::fs::write(&file, "cached").unwrap();
+        std::fs::write(partial_path(&file), "partial").unwrap();
+        let item = Download { url: String::new(), file_name: "model".into(), size: Some(6), sha256: None };
+        assert!(
+            download(&item, &file, &AtomicBool::new(true), &mut |_| panic!("cancelled download reported progress"))
+                .unwrap_err()
+                .is::<Cancelled>()
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"cached");
+        assert_eq!(std::fs::read(partial_path(&file)).unwrap(), b"partial");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

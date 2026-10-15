@@ -23,17 +23,21 @@ pub struct Swapped {
 
 /// Swap the face at `landmarks` with a `size`² output (see [`boosted_size`]).
 pub fn swap(swapper: &mut Swapper, frame: &Frame, landmarks: &Landmarks5, condition: &[f32], size: usize) -> Result<Swapped> {
-    let factor = size / swapper.kind().resolution();
     let to_crop = Template::Arcface128.align(landmarks, size);
     let original = warp_crop(frame, &to_crop, size);
-    let pixels = if factor <= 1 {
-        swapper.swap_crops(std::slice::from_ref(&original), condition)?.swap_remove(0)
-    } else {
-        let mut tiles = swapper.swap_crops(&implode(&original, size, factor), condition)?;
-        equalize(&mut tiles);
-        explode(&tiles, factor)
-    };
+    let pixels = swap_aligned(swapper, &original, size, condition)?;
     Ok(Swapped { face: AlignedCrop { pixels, size, to_crop }, original })
+}
+
+/// Swap an already-aligned `size`² BGR crop (see [`boosted_size`]).
+pub fn swap_aligned(swapper: &mut Swapper, original: &[u8], size: usize, condition: &[f32]) -> Result<Vec<u8>> {
+    let factor = size / swapper.kind().resolution();
+    if factor <= 1 {
+        return Ok(swapper.swap_crops(&[original], condition)?.swap_remove(0));
+    }
+    let mut tiles = swapper.swap_crops(&implode(original, size, factor), condition)?;
+    equalize(&mut tiles);
+    Ok(explode(&tiles, factor))
 }
 
 /// Split a `size`² BGR crop into `factor²` interleaved tiles of `(size / factor)`².

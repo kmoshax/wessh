@@ -41,7 +41,7 @@ Download from [Releases](https://github.com/kmoshax/wessh/releases), then open:
 - **Windows:** setup EXE — install and open from the Start menu.
 - **macOS:** DMG — drag wessh into Applications.
 
-First launch installs your runtime and models for enabled features. Optional masks download when you enable them; TensorRT is opt-in. Downloads happen once and can resume.
+First launch installs your runtime and models for enabled features. Face restoration and masks download when you enable them; ffmpeg is fetched the first time a video file or phone camera needs it. Downloads happen once and can resume.
 
 ## Updates
 
@@ -86,8 +86,8 @@ Global options:
 
 | Option                                                  | Meaning                                          |
 | ------------------------------------------------------- | ------------------------------------------------ |
-| `--device auto\|tensorrt\|cuda\|cpu`                     | inference backend (default `auto`)               |
-| `--enhance true\|false`                                 | GFPGAN face restoration (default on)             |
+| `--device auto\|rtx\|tensorrt\|cuda\|webgpu\|cpu`        | inference backend (default `auto`)               |
+| `--enhance true\|false`                                 | GFPGAN face restoration (default off)            |
 | `--many-faces`                                          | swap every face, not only the largest            |
 | `--detector-size 320\|480\|640`                          | detector input; smaller is faster                |
 | `--ort <path>`                                          | use a specific ONNX Runtime library              |
@@ -97,9 +97,7 @@ Global options:
 | Option                           | Meaning                                                              |
 | -------------------------------- | -------------------------------------------------------------------- |
 | `--dry-run`                      | print the plan with download sizes, change nothing                   |
-| `--flavour cpu\|cuda12\|cuda13\|coreml` | override the detected runtime build                            |
-| `--tensorrt`                     | add optional TensorRT acceleration on NVIDIA (several GB)           |
-| `--no-tensorrt`                  | skip TensorRT even with `--device tensorrt`                         |
+| `--flavour cpu\|cuda12\|cuda13\|coreml\|rtx\|webgpu` | override the detected runtime build (default: `rtx` on RTX 30-series and newer with driver 580+, CUDA on older NVIDIA GPUs, `webgpu` on AMD / Intel) |
 | `--force`                        | reinstall components that are already present                       |
 | `--no-models`                    | skip the models (the app downloads them on first start)              |
 | `--ort-version <x.y.z>`          | ONNX Runtime release to install (default: the tested one)            |
@@ -127,7 +125,9 @@ Everything wessh downloads lives in one directory: `$WESSH_HOME`, or by default
 
 ```text
 <data dir>/ort/lib/          ONNX Runtime and its provider plugins
-<data dir>/ort/lib/cuda/     CUDA, cuBLAS, cuFFT, cuRAND, cuDNN (and TensorRT) libraries
+<data dir>/ort/lib/cuda/     CUDA, cuBLAS, cuRAND, cuDNN libraries (CUDA builds)
+<data dir>/ort/lib/plugins/  TensorRT for RTX or WebGPU plugin
+<data dir>/rtx_cache/        TensorRT for RTX kernel cache
 <data dir>/models/           ONNX models
 <data dir>/trt_cache/        TensorRT engine and timing caches
 ```
@@ -144,6 +144,7 @@ executable (also `./ort/lib` and `./lib`), then `<data dir>/ort/lib`.
 | `WESSH_CUDA_DIR`                  | directory of CUDA libraries to preload                   |
 | `WESSH_THREADS`                   | CPU inference threads (default: one per physical core)   |
 | `WESSH_FFMPEG`                   | ffmpeg executable to run                                 |
+| `WESSH_TIMEWARP=0`               | live mode: swap every frame in line (for measuring)      |
 
 ### Virtual camera on Linux
 

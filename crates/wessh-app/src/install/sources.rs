@@ -1,6 +1,5 @@
 //! Where each component comes from: ONNX Runtime GitHub releases, NVIDIA's CUDA wheels on
-//! PyPI (TensorRT on NVIDIA's own index), the models on Hugging Face, and a static ffmpeg from
-//! the `imageio-ffmpeg` wheels on PyPI.
+//! PyPI, the models on Hugging Face, and a static ffmpeg from the `imageio-ffmpeg` wheels on PyPI.
 
 use super::fetch::{self, Download};
 use super::platform::{Arch, Flavour, Os, Target};
@@ -9,25 +8,26 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use wessh_core::assets::Asset;
+use wessh_core::runtime::locate::Plugin;
 
 /// ONNX Runtime release that `ort` 2.0.0-rc.13 (`api-28`) is built and tested against.
 pub const ORT_VERSION: &str = "1.28.2";
 const ORT_REPO: &str = "microsoft/onnxruntime";
 const PYPI: &str = "https://pypi.org/pypi";
-const NVIDIA_INDEX: &str = "https://pypi.nvidia.com";
 
 /// File name of the ONNX Runtime release archive for a platform and flavour.
 pub fn ort_archive_name(target: Target, flavour: Flavour, version: &str) -> Result<String> {
     let platform = match (target.os, target.arch, flavour) {
-        (Os::Linux, Arch::X86_64, Flavour::Cpu) => "linux-x64",
+        // The plugin flavours run on the CPU build, which loads the plugin at start-up.
+        (Os::Linux, Arch::X86_64, Flavour::Cpu | Flavour::Rtx | Flavour::Webgpu) => "linux-x64",
         (Os::Linux, Arch::X86_64, Flavour::Cuda12) => "linux-x64-gpu_cuda12",
         (Os::Linux, Arch::X86_64, Flavour::Cuda13) => "linux-x64-gpu_cuda13",
-        (Os::Linux, Arch::Aarch64, Flavour::Cpu) => "linux-aarch64",
-        (Os::Windows, Arch::X86_64, Flavour::Cpu) => "win-x64",
+        (Os::Linux, Arch::Aarch64, Flavour::Cpu | Flavour::Rtx | Flavour::Webgpu) => "linux-aarch64",
+        (Os::Windows, Arch::X86_64, Flavour::Cpu | Flavour::Rtx | Flavour::Webgpu) => "win-x64",
         (Os::Windows, Arch::X86_64, Flavour::Cuda12) => "win-x64-gpu_cuda12",
         (Os::Windows, Arch::X86_64, Flavour::Cuda13) => "win-x64-gpu_cuda13",
-        (Os::Windows, Arch::Aarch64, Flavour::Cpu) => "win-arm64",
-        (Os::Mac, Arch::Aarch64, Flavour::Cpu | Flavour::Coreml) => "osx-arm64",
+        (Os::Windows, Arch::Aarch64, Flavour::Cpu | Flavour::Rtx | Flavour::Webgpu) => "win-arm64",
+        (Os::Mac, Arch::Aarch64, Flavour::Cpu | Flavour::Coreml | Flavour::Webgpu) => "osx-arm64",
         (Os::Mac, Arch::X86_64, _) => bail!(
             "Microsoft no longer publishes ONNX Runtime for Intel Macs; run `brew install onnxruntime` and start wessh with \
              --ort \"$(brew --prefix onnxruntime)/lib/libonnxruntime.dylib\""
@@ -78,14 +78,6 @@ pub fn ort_release(target: Target, flavour: Flavour, version: &str) -> Result<Do
     }
 }
 
-/// Package index hosting a wheel.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Index {
-    PyPi,
-    /// `pypi.nvidia.com`; PyPI only has placeholder sdists for TensorRT.
-    Nvidia,
-}
-
 /// An NVIDIA redistributable shipped as a Python wheel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Wheel {
@@ -96,11 +88,10 @@ pub struct Wheel {
     pub versions: &'static str,
     /// File-name prefix of the main library, per `[unix, windows]`; proves it is installed.
     library: [&'static str; 2],
-    index: Index,
 }
 
 const fn wheel(package: &'static str, label: &'static str, versions: &'static str, unix: &'static str, windows: &'static str) -> Wheel {
-    Wheel { package, label, versions, library: [unix, windows], index: Index::PyPi }
+    Wheel { package, label, versions, library: [unix, windows] }
 }
 
 /// The CUDA 13 libraries ONNX Runtime's CUDA provider and cuDNN load.
@@ -124,25 +115,40 @@ const CUDA12: [Wheel; 7] = [
     wheel("nvidia-cuda-nvrtc-cu12", "NVRTC", "12.", "libnvrtc.so", "nvrtc64_"),
 ];
 
-/// ONNX Runtime 1.28's TensorRT provider is built against TensorRT 10.
-const fn tensorrt(package: &'static str) -> Wheel {
-    Wheel { package, label: "TensorRT", versions: "10.", library: ["libnvinfer.so", "nvinfer_"], index: Index::Nvidia }
+/// Wheels needed for a CUDA major version.
+#[must_use]
+pub fn cuda_wheels(cuda_major: u32) -> Vec<Wheel> {
+    if cuda_major >= 13 { CUDA13.to_vec() } else { CUDA12.to_vec() }
 }
 
-/// Wheels needed for a CUDA major version, optionally with TensorRT.
+/// The wheel carrying an execution-provider plugin: the plugin, and for TensorRT for RTX its own
+/// TensorRT-RTX and CUDA runtime (the driver provides the rest).
 #[must_use]
-pub fn cuda_wheels(cuda_major: u32, with_tensorrt: bool) -> Vec<Wheel> {
-    let (base, trt) = if cuda_major >= 13 { (&CUDA13, tensorrt("tensorrt-cu13-libs")) } else { (&CUDA12, tensorrt("tensorrt-cu12-libs")) };
-    base.iter().copied().chain(with_tensorrt.then_some(trt)).collect()
+pub const fn plugin_wheel(plugin: Plugin) -> Wheel {
+    match plugin {
+        Plugin::NvRtx => wheel(
+            "onnxruntime-ep-nv-tensorrt-rtx-cu13",
+            "TensorRT for RTX",
+            "0.",
+            "libonnxruntime_providers_nv_tensorrt_rtx.so",
+            "onnxruntime_providers_nv_tensorrt_rtx.dll",
+        ),
+        Plugin::WebGpu => {
+            wheel("onnxruntime-ep-webgpu", "WebGPU", "0.", "libonnxruntime_providers_webgpu", "onnxruntime_providers_webgpu.dll")
+        }
+    }
+}
+
+/// Our face models have no FFT operators. ORT 1.28.2 loads cuFFT only for FFT ops;
+/// older/custom runtimes retain the full compatibility set.
+#[must_use]
+pub fn cuda_wheels_for_runtime(cuda_major: u32, ort_version: &str) -> Vec<Wheel> {
+    let optional_fft =
+        semver::Version::parse(ort_version).is_ok_and(|version| version.pre.is_empty() && version >= semver::Version::new(1, 28, 2));
+    cuda_wheels(cuda_major).into_iter().filter(|wheel| !optional_fft || wheel.label != "cuFFT").collect()
 }
 
 impl Wheel {
-    /// TensorRT, the optional (and by far the largest) download.
-    #[must_use]
-    pub fn is_tensorrt(&self) -> bool {
-        self.index == Index::Nvidia
-    }
-
     /// Whether this wheel's main library is already in `dir`.
     #[must_use]
     pub fn is_installed(&self, dir: &Path, os: Os) -> bool {
@@ -152,14 +158,7 @@ impl Wheel {
 
     /// Newest compatible wheel for `target`: its version and download.
     pub fn resolve(&self, target: Target) -> Result<(String, Download)> {
-        let candidates = match self.index {
-            Index::PyPi => pypi_candidates(self.package)?,
-            Index::Nvidia => {
-                let url = format!("{NVIDIA_INDEX}/{}/", self.package);
-                parse_simple_index(&fetch::get_text(&url, "text/html")?, &url)
-            }
-        };
-        let best = pick(candidates, self.versions, target)
+        let best = pick(pypi_candidates(self.package)?, self.versions, target)
             .with_context(|| format!("no {} {}x wheel for {:?} {:?}", self.package, self.versions, target.os, target.arch))?;
         let (size, sha256) = match best.size {
             Some(size) => (Some(size), best.sha256),
@@ -216,31 +215,6 @@ fn pypi_candidates(package: &str) -> Result<Vec<Candidate>> {
         .collect())
 }
 
-/// Wheels listed on a PEP 503 "simple" index page: `<a href="name.whl#sha256=...">`.
-fn parse_simple_index(html: &str, base_url: &str) -> Vec<Candidate> {
-    html.split("href=\"")
-        .skip(1)
-        .filter_map(|rest| {
-            let href = &rest[..rest.find('"')?];
-            let (path, fragment) = href.split_once('#').unwrap_or((href, ""));
-            let filename = path.rsplit('/').next()?.to_owned();
-            let url = if path.starts_with("https://") { path.to_owned() } else { format!("{base_url}{path}") };
-            Some(Candidate {
-                version: wheel_version(&filename)?.to_owned(),
-                sha256: fragment.strip_prefix("sha256=").and_then(fetch::normalize_sha256),
-                filename,
-                url,
-                size: None,
-            })
-        })
-        .collect()
-}
-
-/// Version field of a wheel file name (`{name}-{version}-{python}-{abi}-{platform}.whl`).
-fn wheel_version(filename: &str) -> Option<&str> {
-    filename.strip_suffix(".whl")?.split('-').nth(1)
-}
-
 /// Whether a wheel's platform tag runs on `target`.
 fn wheel_supports(filename: &str, target: Target) -> bool {
     let Some(platform) = filename.strip_suffix(".whl").and_then(|f| f.rsplit('-').next()) else { return false };
@@ -249,7 +223,7 @@ fn wheel_supports(filename: &str, target: Target) -> bool {
         (Os::Linux, Arch::Aarch64) => tag.starts_with("manylinux") && tag.ends_with("_aarch64"),
         (Os::Windows, Arch::X86_64) => tag == "win_amd64",
         (Os::Windows, Arch::Aarch64) => tag == "win_arm64",
-        (Os::Mac, Arch::Aarch64) => tag.starts_with("macosx") && tag.ends_with("_arm64"),
+        (Os::Mac, Arch::Aarch64) => tag.starts_with("macosx") && (tag.ends_with("_arm64") || tag.ends_with("_universal2")),
         (Os::Mac, Arch::X86_64) => tag.starts_with("macosx") && (tag.ends_with("_x86_64") || tag.ends_with("_intel")),
     })
 }
@@ -312,6 +286,8 @@ mod tests {
         assert_eq!(name(Target { os: Os::Linux, arch: Arch::Aarch64 }, Flavour::Cpu), "onnxruntime-linux-aarch64-1.28.2.tgz");
         assert!(ort_archive_name(Target { os: Os::Mac, arch: Arch::X86_64 }, Flavour::Cpu, ORT_VERSION).is_err());
         assert!(ort_archive_name(Target { os: Os::Linux, arch: Arch::Aarch64 }, Flavour::Cuda13, ORT_VERSION).is_err());
+        assert_eq!(name(LINUX_X64, Flavour::Rtx), name(LINUX_X64, Flavour::Cpu));
+        assert_eq!(name(WINDOWS_X64, Flavour::Webgpu), name(WINDOWS_X64, Flavour::Cpu));
     }
 
     #[test]
@@ -321,13 +297,14 @@ mod tests {
         assert!(!wheel_supports(linux, WINDOWS_X64));
         assert!(!wheel_supports(linux, Target { os: Os::Linux, arch: Arch::Aarch64 }));
         assert!(wheel_supports("nvidia_cufft-12.4.0.43-py3-none-win_amd64.whl", WINDOWS_X64));
-        assert!(!wheel_supports("tensorrt_cu13_libs-11.3.0.99.tar.gz", LINUX_X64));
+        assert!(!wheel_supports("nvidia_cublas-13.1.0.3.tar.gz", LINUX_X64));
         let mac_arm = Target { os: Os::Mac, arch: Arch::Aarch64 };
         let mac_intel = Target { os: Os::Mac, arch: Arch::X86_64 };
         assert!(wheel_supports("imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", mac_arm));
         assert!(!wheel_supports("imageio_ffmpeg-0.6.0-py3-none-macosx_11_0_arm64.whl", mac_intel));
         assert!(wheel_supports("imageio_ffmpeg-0.6.0-py3-none-macosx_10_9_intel.macosx_10_9_x86_64.whl", mac_intel));
         assert!(!wheel_supports("imageio_ffmpeg-0.6.0-py3-none-win32.whl", WINDOWS_X64));
+        assert!(wheel_supports("onnxruntime_ep_webgpu-0.4.0-py3-none-macosx_14_0_universal2.whl", mac_arm));
     }
 
     #[test]
@@ -351,28 +328,20 @@ mod tests {
     }
 
     #[test]
-    fn parses_nvidia_simple_index() {
-        let hash = "044468b0705728c0c8f0e95325ba881ff3e23bd2eebce0b1e628953ff90bbb5f";
-        let html = format!(
-            r#"<a href="tensorrt_cu13_libs-10.13.2.6-py2.py3-none-manylinux_2_28_x86_64.whl#sha256={hash}">x</a><br>
-               <a href="tensorrt_cu13_libs-10.13.3.9-py2.py3-none-win_amd64.whl">y</a>"#
-        );
-        let parsed = parse_simple_index(&html, "https://pypi.nvidia.com/tensorrt-cu13-libs/");
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].version, "10.13.2.6");
-        assert_eq!(parsed[0].sha256.as_deref(), Some(hash));
-        assert_eq!(
-            parsed[0].url,
-            "https://pypi.nvidia.com/tensorrt-cu13-libs/tensorrt_cu13_libs-10.13.2.6-py2.py3-none-manylinux_2_28_x86_64.whl"
-        );
-        assert_eq!(parsed[1].sha256, None);
+    fn face_runtime_skips_fft_but_preserves_older_runtime_dependencies() {
+        for major in [12, 13] {
+            let current = cuda_wheels_for_runtime(major, ORT_VERSION);
+            assert_eq!(current.len(), 6);
+            assert!(!current.iter().any(|wheel| wheel.label == "cuFFT"));
+            for version in ["1.27.0", "1.28.1", "custom", "1.29.0-rc.1"] {
+                assert_eq!(cuda_wheels_for_runtime(major, version), cuda_wheels(major));
+            }
+        }
     }
 
     #[test]
     fn wheel_sets() {
-        assert_eq!(cuda_wheels(13, false).len(), CUDA13.len());
-        let with_trt = cuda_wheels(12, true);
-        assert_eq!(with_trt.last().unwrap().package, "tensorrt-cu12-libs");
-        assert!(with_trt.iter().all(|w| w.package.contains("cu12")));
+        assert_eq!(cuda_wheels(13).len(), CUDA13.len());
+        assert!(cuda_wheels(12).iter().all(|w| w.package.contains("cu12")));
     }
 }

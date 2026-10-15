@@ -213,10 +213,10 @@ mod tests {
     use crate::Settings;
 
     #[test]
-    fn default_downloads_skip_disabled_masks() {
-        assert_eq!(required(&Settings::default()), [DETECTOR, RECOGNIZER, SwapModel::Inswapper.asset(), ENHANCER]);
-        let settings = Settings { enhance: false, ..Settings::default() };
-        assert_eq!(required(&settings), [DETECTOR, RECOGNIZER, SwapModel::Inswapper.asset()]);
+    fn default_downloads_skip_disabled_enhancer_and_masks() {
+        assert_eq!(required(&Settings::default()), [DETECTOR, RECOGNIZER, SwapModel::Inswapper.asset()]);
+        let settings = Settings { enhance: true, ..Settings::default() };
+        assert_eq!(required(&settings), [DETECTOR, RECOGNIZER, SwapModel::Inswapper.asset(), ENHANCER]);
     }
 
     #[test]

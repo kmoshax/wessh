@@ -9,9 +9,9 @@ use std::io::{self, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Directory names under which archives keep their shared libraries (TensorRT's wheels use
+/// Directory names under which archives keep their shared libraries (the plugin wheels use
 /// their own package directory instead of `lib/`).
-const LIBRARY_DIRS: [&str; 3] = ["lib", "bin", "tensorrt_libs"];
+const LIBRARY_DIRS: [&str; 4] = ["lib", "bin", "onnxruntime_ep_nv_tensorrt_rtx", "onnxruntime_ep_webgpu"];
 
 /// If `member` (a `/`-separated archive path) is a shared library inside one of
 /// [`LIBRARY_DIRS`], the file name to install it under.
@@ -154,7 +154,9 @@ mod tests {
             ("nvidia/cu13/lib/libcudart.so.13", "libcudart.so.13"),
             ("nvidia/cu13/bin/x86_64/cudart64_13.dll", "cudart64_13.dll"),
             ("nvidia/cudnn/bin/cudnn64_9.dll", "cudnn64_9.dll"),
-            ("tensorrt_libs/libnvinfer.so.10", "libnvinfer.so.10"),
+            ("onnxruntime_ep_nv_tensorrt_rtx/libtensorrt_rtx.so.1.6.1", "libtensorrt_rtx.so.1.6.1"),
+            ("onnxruntime_ep_nv_tensorrt_rtx/onnxruntime_providers_nv_tensorrt_rtx.dll", "onnxruntime_providers_nv_tensorrt_rtx.dll"),
+            ("onnxruntime_ep_webgpu/libonnxruntime_providers_webgpu.so", "libonnxruntime_providers_webgpu.so"),
         ];
         for (member, name) in keep {
             assert_eq!(library_file_name(member), Some(name), "{member}");

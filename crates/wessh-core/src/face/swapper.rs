@@ -105,10 +105,10 @@ impl Swapper {
     }
 
     /// Swap already-aligned native-resolution BGR crops, as one batch when the model allows it.
-    pub fn swap_crops(&mut self, crops: &[Vec<u8>], condition: &[f32]) -> Result<Vec<Vec<u8>>> {
+    pub fn swap_crops<C: AsRef<[u8]>>(&mut self, crops: &[C], condition: &[f32]) -> Result<Vec<Vec<u8>>> {
         let (size, norm) = (self.kind.resolution(), self.normalization());
         match &mut self.network {
-            Network::Static(bound) => crops.iter().map(|crop| bound.run(crop, condition, size, norm)).collect(),
+            Network::Static(bound) => crops.iter().map(|crop| bound.run(crop.as_ref(), condition, size, norm)).collect(),
             Network::Dynamic { model, batching } => {
                 if crops.len() > 1 && *batching != Some(false) {
                     match run_dynamic(model, crops, condition, size, norm) {
@@ -140,9 +140,15 @@ impl BoundSwap {
 }
 
 /// One run of a dynamically shaped swap network over `crops` as a batch.
-fn run_dynamic(model: &mut Model, crops: &[Vec<u8>], condition: &[f32], size: usize, norm: Normalization) -> Result<Vec<Vec<u8>>> {
+fn run_dynamic<C: AsRef<[u8]>>(
+    model: &mut Model,
+    crops: &[C],
+    condition: &[f32],
+    size: usize,
+    norm: Normalization,
+) -> Result<Vec<Vec<u8>>> {
     let n = crops.len();
-    let target: Vec<f32> = crops.iter().flat_map(|crop| to_nchw(crop, size, norm)).collect();
+    let target: Vec<f32> = crops.iter().flat_map(|crop| to_nchw(crop.as_ref(), size, norm)).collect();
     let output = model.run_single(vec![
         Input { name: "target", shape: vec![n as i64, 3, size as i64, size as i64], data: target },
         Input { name: "source", shape: vec![n as i64, condition.len() as i64], data: condition.repeat(n) },

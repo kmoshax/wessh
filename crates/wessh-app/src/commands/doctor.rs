@@ -2,7 +2,7 @@
 
 use crate::cli::Options;
 use crate::install::archive::is_shared_library;
-use crate::install::platform::{self, Os, Target};
+use crate::install::platform::{self, Flavour, Os, Target};
 use crate::install::sources;
 use anyhow::Result;
 use ort::ep::{CUDA, ExecutionProvider, TensorRT};
@@ -41,7 +41,7 @@ pub fn run(options: &Options) -> Result<()> {
     let recommended = platform::choose_flavour(target, &gpus);
     row("best runtime", format!("{} ({})", recommended.flavour, recommended.reason));
 
-    check_runtime(options, target, recommended.flavour.cuda_major(), &mut report);
+    check_runtime(options, target, recommended.flavour, &mut report);
     check_ffmpeg();
     check_models(options, &mut report);
     if target.os == Os::Linux {
@@ -62,7 +62,8 @@ pub fn run(options: &Options) -> Result<()> {
     Ok(())
 }
 
-fn check_runtime(options: &Options, target: Target, wanted_cuda: Option<u32>, report: &mut Report) {
+fn check_runtime(options: &Options, target: Target, recommended: Flavour, report: &mut Report) {
+    let wanted_cuda = recommended.cuda_major();
     let library = match locate::runtime_library(options.ort.as_deref()) {
         Ok(library) => library,
         Err(e) => {
@@ -72,7 +73,16 @@ fn check_runtime(options: &Options, target: Target, wanted_cuda: Option<u32>, re
         }
     };
     let runtime_dir = library.parent().unwrap_or(Path::new("."));
-    let plugins: Vec<&str> = ["cuda", "tensorrt"].into_iter().filter(|p| locate::has_provider(runtime_dir, p)).collect();
+    let mut plugins: Vec<&str> = ["cuda", "tensorrt"].into_iter().filter(|p| locate::has_provider(runtime_dir, p)).collect();
+    plugins.extend(
+        locate::Plugin::ALL.into_iter().filter(|&p| locate::plugin_library(runtime_dir, p).is_some()).map(locate::Plugin::dir_name),
+    );
+    if let Some(plugin) = recommended.plugin()
+        && locate::plugin_library(runtime_dir, plugin).is_none()
+        && plugins.is_empty()
+    {
+        report.problems.push(format!("the {recommended} plugin is not installed, so wessh runs on the CPU; run `wessh setup`"));
+    }
 
     let cuda_dir = locate::cuda_dir(runtime_dir);
     if let Some(dir) = &cuda_dir {
@@ -85,12 +95,12 @@ fn check_runtime(options: &Options, target: Target, wanted_cuda: Option<u32>, re
         }
     }
     if let Some(major) = wanted_cuda {
-        let missing: Vec<&str> = sources::cuda_wheels(major, false)
+        let missing: Vec<&str> = sources::cuda_wheels_for_runtime(major, sources::ORT_VERSION)
             .into_iter()
             .filter(|w| !cuda_dir.as_deref().is_some_and(|d| w.is_installed(d, target.os)))
             .map(|w| w.package)
             .collect();
-        if plugins.is_empty() {
+        if !plugins.contains(&"cuda") {
             report
                 .problems
                 .push("the installed ONNX Runtime is a CPU-only build although an NVIDIA GPU is usable; run `wessh setup`".to_owned());
@@ -109,12 +119,8 @@ fn check_runtime(options: &Options, target: Target, wanted_cuda: Option<u32>, re
                 .chain(["CPU"])
                 .collect();
             row("providers", providers.join(", "));
-            row("plugins", if plugins.is_empty() { "none (CPU-only build)".to_owned() } else { plugins.join(", ") });
+            row("plugins", if plugins.is_empty() { "none (CPU only)".to_owned() } else { plugins.join(", ") });
             row("backend", format!("{} (with --device auto)", engine.backend()));
-            let has_tensorrt = plugins.contains(&"tensorrt") && locate::has_tensorrt_runtime(cuda_dir.as_deref());
-            if wanted_cuda.is_some() && !plugins.is_empty() && !has_tensorrt {
-                report.suggestions.push("`wessh setup --tensorrt` adds TensorRT, the fastest NVIDIA backend".to_owned());
-            }
         }
         Err(e) => {
             row("ONNX Runtime", library.display());

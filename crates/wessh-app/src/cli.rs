@@ -152,7 +152,7 @@ pub enum Command {
     },
     /// Download models for the enabled features (what the app's onboarding installs).
     Models,
-    /// Install the ONNX Runtime build for this GPU, its CUDA (and TensorRT) libraries and the models.
+    /// Install the ONNX Runtime build for this GPU, its GPU libraries and the models.
     Setup(SetupArgs),
     /// Check the installation and explain how to fix what is missing.
     Doctor,
@@ -166,12 +166,6 @@ pub struct SetupArgs {
     /// Runtime build to install [default: chosen from the GPU and driver].
     #[arg(long, value_enum)]
     pub flavour: Option<Flavour>,
-    /// Include optional TensorRT libraries on NVIDIA GPUs (several GB).
-    #[arg(long, conflicts_with = "no_tensorrt")]
-    pub tensorrt: bool,
-    /// Skip TensorRT even when --device tensorrt is set (accepted for compatibility).
-    #[arg(long)]
-    pub no_tensorrt: bool,
     /// ONNX Runtime release to install.
     #[arg(long, default_value = ORT_VERSION)]
     pub ort_version: String,

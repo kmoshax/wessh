@@ -20,6 +20,9 @@ use ort::value::{Outlet, Tensor, TensorValueType};
 pub(crate) enum Placement {
     /// CPU execution provider: everything lives in ordinary host memory.
     Host,
+    /// A GPU plugin fed from host memory. ONNX Runtime copies a host input to the device when it
+    /// is bound, not when the model runs, so changed inputs are bound again before every run.
+    Staged,
     /// CUDA / TensorRT: pinned host staging plus fixed-address device input tensors.
     Device,
 }
@@ -44,6 +47,8 @@ pub struct StaticModel {
     session: Session,
     _pinned: Option<Allocator>,
     _device: Option<Allocator>,
+    /// Bind changed host inputs again before each run ([`Placement::Staged`]).
+    rebind: bool,
     name: &'static str,
 }
 
@@ -51,7 +56,7 @@ impl StaticModel {
     /// `output_shapes` supplies the shapes of outputs whose metadata is symbolic (by position).
     pub(crate) fn new(session: Session, name: &'static str, placement: Placement, output_shapes: &[Vec<usize>]) -> Result<Self> {
         let (pinned, device) = match placement {
-            Placement::Host => (None, None),
+            Placement::Host | Placement::Staged => (None, None),
             Placement::Device => {
                 let pinned = MemoryInfo::new(AllocationDevice::CUDA_PINNED, 0, AllocatorType::Device, MemoryType::CPUInput)?;
                 let device = MemoryInfo::new(AllocationDevice::CUDA, 0, AllocatorType::Device, MemoryType::Default)?;
@@ -80,7 +85,7 @@ impl StaticModel {
             outputs.push(vec![0.0; dims.iter().product()]);
             binding.bind_output(outlet.name(), Tensor::<f32>::new(&default_allocator, dims.as_slice())?)?;
         }
-        Ok(Self { binding, inputs, outputs, session, _pinned: pinned, _device: device, name })
+        Ok(Self { binding, inputs, outputs, session, _pinned: pinned, _device: device, rebind: placement == Placement::Staged, name })
     }
 
     /// Index of the input called `name`.
@@ -111,10 +116,12 @@ impl StaticModel {
     /// Upload changed inputs, run the network and collect every output.
     pub fn run(&mut self) -> Result<()> {
         for slot in &mut self.inputs {
-            if let Some(device) = slot.device.as_mut()
-                && slot.dirty
-            {
-                slot.host.copy_into(device)?;
+            if slot.dirty {
+                if let Some(device) = slot.device.as_mut() {
+                    slot.host.copy_into(device)?;
+                } else if self.rebind {
+                    self.binding.bind_input(&slot.name, &slot.host)?;
+                }
             }
             slot.dirty = false;
         }

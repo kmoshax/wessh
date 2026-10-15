@@ -19,6 +19,12 @@ pub enum OutputTarget {
 }
 
 impl OutputTarget {
+    /// Whether writing to this target goes through ffmpeg.
+    #[must_use]
+    pub const fn needs_ffmpeg(&self) -> bool {
+        matches!(self, Self::Stream(_))
+    }
+
     /// Classify a user-supplied target string.
     #[must_use]
     pub fn parse(target: &str) -> Self {

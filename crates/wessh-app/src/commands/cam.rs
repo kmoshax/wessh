@@ -8,6 +8,9 @@ use wessh_core::{Settings, Stats};
 use wessh_media::{Camera, FrameSink, LatestFrame, OutputTarget};
 
 pub fn run(options: &Options, source: &[PathBuf], camera: &CameraArgs, out: Option<&str>) -> Result<()> {
+    if Camera::needs_ffmpeg(&camera.camera) || out.is_some_and(|t| OutputTarget::parse(t).needs_ffmpeg()) {
+        super::setup::ensure_ffmpeg()?;
+    }
     let mut processor = processor(options, source)?;
     let settings = Settings { mirror: camera.mirror, ..options.settings() };
     let mailbox = Arc::new(LatestFrame::default());
