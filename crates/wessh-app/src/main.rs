@@ -16,6 +16,7 @@ use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
+    wessh_media::restore_camera_settings();
     match cli.command {
         None => {
             update::clean_up();

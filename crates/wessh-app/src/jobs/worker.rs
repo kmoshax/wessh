@@ -79,7 +79,7 @@ fn offline(settings: &Settings) -> Settings {
 fn prepare<'a>(engine: &EngineOptions, loaded: &'a mut Option<Loaded>, source: &Path, settings: &Settings) -> Result<&'a mut Processor> {
     if loaded.is_none() {
         let engine = Engine::init(engine.runtime.as_deref(), engine.device)?;
-        *loaded = Some(Loaded { processor: Processor::new(engine)?, source: None });
+        *loaded = Some(Loaded { processor: Processor::new(engine, settings)?, source: None });
     }
     let state = loaded.as_mut().expect("loaded above");
     if state.source.as_deref() != Some(source) {

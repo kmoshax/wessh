@@ -111,6 +111,8 @@ impl std::fmt::Display for Backend {
 pub struct Engine {
     backend: Backend,
     cpu_threads: usize,
+    /// Why an installed GPU runtime couldn't be used, when the engine fell back because of it.
+    gpu_failure: Option<String>,
 }
 
 impl Engine {
@@ -128,8 +130,16 @@ impl Engine {
             .with_name("wessh")
             .commit();
 
-        // The first usable plugin in order of preference, registered with the environment.
-        let plugin = Plugin::ALL.into_iter().filter(|&p| device.allows(p)).find(|&p| register_plugin(runtime_dir, p));
+        // The first usable plugin in order of preference, registered with the environment; an
+        // installed one that fails is remembered, so the fallback can say why.
+        let mut gpu_failure = None;
+        let plugin = Plugin::ALL.into_iter().filter(|&p| device.allows(p)).find(|&p| match register_plugin(runtime_dir, p) {
+            Ok(ready) => ready,
+            Err(reason) => {
+                gpu_failure.get_or_insert(reason);
+                false
+            }
+        });
         let cuda = wants_cuda && locate::has_provider(runtime_dir, "cuda");
         let tensorrt = cuda
             && matches!(device, Device::Auto | Device::Tensorrt)
@@ -152,12 +162,30 @@ impl Engine {
         } else {
             Backend::Cpu
         };
-        Ok(Self { backend, cpu_threads: cpu_threads() })
+        // A failed plugin only matters when nothing better took over.
+        let gpu_failure = gpu_failure.filter(|_| matches!(backend, Backend::Cpu | Backend::CoreMl));
+        Ok(Self { backend, cpu_threads: cpu_threads(), gpu_failure })
+    }
+
+    /// Why the GPU runtime that is installed isn't in use, when the engine fell back to the CPU
+    /// because it failed (an outdated driver, a GPU it doesn't support); `None` otherwise,
+    /// including when no GPU runtime is installed at all.
+    #[must_use]
+    pub fn gpu_failure(&self) -> Option<&str> {
+        self.gpu_failure.as_deref()
     }
 
     #[must_use]
     pub const fn backend(&self) -> Backend {
         self.backend
+    }
+
+    /// Whether sessions may be created and run on several threads at once. The WebGPU plugin
+    /// shares one device between its sessions and crashes when they are (Dawn: "command encoder
+    /// is already finished", then a segfault).
+    #[must_use]
+    pub const fn concurrent_sessions(&self) -> bool {
+        !matches!(self.backend, Backend::WebGpu)
     }
 
     /// Load `asset` (downloading it if needed) with this engine's execution providers.
@@ -308,36 +336,37 @@ impl Engine {
 /// Load `plugin` from beside the runtime into the environment; `true` when it found a device to
 /// run on. The TensorRT for RTX plugin brings versioned libraries without the symlinks the
 /// loader looks for (`libtensorrt_rtx.so.1`), so they are preloaded like the CUDA ones.
-fn register_plugin(runtime_dir: &Path, plugin: Plugin) -> bool {
+/// `Ok(false)` when the plugin isn't installed, `Err` with the reason when it is but can't run.
+fn register_plugin(runtime_dir: &Path, plugin: Plugin) -> std::result::Result<bool, String> {
     // The app initialises an engine on both its live and its job worker, but a plugin can be
     // registered with the process's environment only once: later engines reuse the outcome.
-    static REGISTERED: Mutex<Vec<(Plugin, bool)>> = Mutex::new(Vec::new());
+    type Outcome = std::result::Result<bool, String>;
+    static REGISTERED: Mutex<Vec<(Plugin, Outcome)>> = Mutex::new(Vec::new());
     let mut registered = REGISTERED.lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(&(_, found)) = registered.iter().find(|(p, _)| *p == plugin) {
-        return found;
+    if let Some((_, outcome)) = registered.iter().find(|(p, _)| *p == plugin) {
+        return outcome.clone();
     }
-    let found = load_plugin(runtime_dir, plugin);
-    registered.push((plugin, found));
-    found
+    let outcome = load_plugin(runtime_dir, plugin);
+    if let Err(reason) = &outcome {
+        eprintln!("{reason}");
+    }
+    registered.push((plugin, outcome.clone()));
+    outcome
 }
 
-fn load_plugin(runtime_dir: &Path, plugin: Plugin) -> bool {
-    let Some(library) = locate::plugin_library(runtime_dir, plugin) else { return false };
+fn load_plugin(runtime_dir: &Path, plugin: Plugin) -> std::result::Result<bool, String> {
+    let Some(library) = locate::plugin_library(runtime_dir, plugin) else { return Ok(false) };
     if let Some(dir) = library.parent() {
         locate::preload_libraries(dir);
     }
-    let registered = Environment::current().and_then(|env| {
-        // Plugins name their devices' provider after the name they are registered under.
-        env.register_ep_library(plugin.ep_name(), &library)?;
-        Ok(env.devices().any(|device| device.ep().is_ok_and(|ep| ep == plugin.ep_name())))
-    });
-    match registered {
-        Ok(found) => found,
-        Err(e) => {
-            eprintln!("{}: could not load ({e}); skipping", library.display());
-            false
-        }
-    }
+    let found = Environment::current()
+        .and_then(|env| {
+            // Plugins name their devices' provider after the name they are registered under.
+            env.register_ep_library(plugin.ep_name(), &library)?;
+            Ok(env.devices().any(|device| device.ep().is_ok_and(|ep| ep == plugin.ep_name())))
+        })
+        .map_err(|e| format!("{} could not be loaded: {e}", plugin.label()))?;
+    if found { Ok(true) } else { Err(format!("{} found no GPU it supports", plugin.label())) }
 }
 
 /// Attach `plugin`'s devices to the session, with its options.

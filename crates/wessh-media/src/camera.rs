@@ -145,11 +145,11 @@ impl Camera {
 /// Keeps a camera at its full frame rate while capturing. With exposure priority on, a camera may
 /// lengthen its exposure in dim light at the cost of frames — a 30 fps webcam drops to 15, doubling
 /// the delay before a face appears. Live swapping wants every frame, so it is switched off for as
-/// long as wessh captures, and the user's setting restored when capture stops (a killed process
-/// leaves it off, which is the camera's own default).
+/// long as wessh captures. The camera is noted in [`restore_record`] before it is changed, so if
+/// wessh is killed before it can switch it back, [`restore_camera_settings`] does on the next start.
 struct SteadyFrameRate {
     #[cfg(target_os = "linux")]
-    device: Option<v4l::Device>,
+    held: Option<(u32, v4l::Device)>,
 }
 
 /// `V4L2_CID_EXPOSURE_AUTO_PRIORITY` (`linux/v4l2-controls.h`), `exposure_dynamic_framerate` to
@@ -157,15 +157,61 @@ struct SteadyFrameRate {
 #[cfg(target_os = "linux")]
 const EXPOSURE_AUTO_PRIORITY: u32 = 0x009a_0903;
 
+/// Cameras whose exposure priority wessh switched off, one index per line.
+fn restore_record() -> std::path::PathBuf {
+    wessh_core::assets::data_dir().join("camera-restore")
+}
+
+#[cfg(target_os = "linux")]
+fn set_exposure_priority(device: &v4l::Device, on: bool) -> bool {
+    use v4l::control::{Control, Value};
+    device.set_control(Control { id: EXPOSURE_AUTO_PRIORITY, value: Value::Boolean(on) }).is_ok()
+}
+
+/// Indices in the restore record.
+fn recorded() -> Vec<u32> {
+    std::fs::read_to_string(restore_record()).map(|text| text.lines().filter_map(|l| l.trim().parse().ok()).collect()).unwrap_or_default()
+}
+
+fn write_record(indices: &[u32]) {
+    let path = restore_record();
+    if indices.is_empty() {
+        let _ = std::fs::remove_file(path);
+    } else {
+        let text = indices.iter().map(u32::to_string).collect::<Vec<_>>().join("\n");
+        let _ = std::fs::create_dir_all(wessh_core::assets::data_dir());
+        let _ = std::fs::write(path, text);
+    }
+}
+
+/// Give back the camera settings a previous run changed and couldn't restore (it was killed).
+/// Call once on start, before any capture.
+pub fn restore_camera_settings() {
+    #[cfg(target_os = "linux")]
+    for index in recorded() {
+        if let Ok(device) = v4l::Device::new(index as usize) {
+            set_exposure_priority(&device, true);
+        }
+    }
+    write_record(&[]);
+}
+
 impl SteadyFrameRate {
     #[cfg(target_os = "linux")]
     fn hold(index: u32) -> Self {
-        use v4l::control::{Control, Value};
-        let device = v4l::Device::new(index as usize).ok().filter(|device| {
-            device.control(EXPOSURE_AUTO_PRIORITY).is_ok_and(|control| control.value == Value::Boolean(true))
-                && device.set_control(Control { id: EXPOSURE_AUTO_PRIORITY, value: Value::Boolean(false) }).is_ok()
-        });
-        Self { device }
+        use v4l::control::Value;
+        let Ok(device) = v4l::Device::new(index as usize) else { return Self { held: None } };
+        if !device.control(EXPOSURE_AUTO_PRIORITY).is_ok_and(|control| control.value == Value::Boolean(true)) {
+            return Self { held: None };
+        }
+        let mut indices = recorded();
+        indices.push(index);
+        write_record(&indices);
+        let held = set_exposure_priority(&device, false).then_some((index, device));
+        if held.is_none() {
+            write_record(&indices[..indices.len() - 1]);
+        }
+        Self { held }
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -177,9 +223,10 @@ impl SteadyFrameRate {
 #[cfg(target_os = "linux")]
 impl Drop for SteadyFrameRate {
     fn drop(&mut self) {
-        use v4l::control::{Control, Value};
-        if let Some(device) = &self.device {
-            let _ = device.set_control(Control { id: EXPOSURE_AUTO_PRIORITY, value: Value::Boolean(true) });
+        if let Some((index, device)) = &self.held
+            && set_exposure_priority(device, true)
+        {
+            write_record(&recorded().into_iter().filter(|i| i != index).collect::<Vec<_>>());
         }
     }
 }

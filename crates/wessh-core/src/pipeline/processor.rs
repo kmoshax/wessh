@@ -133,6 +133,9 @@ pub struct Processor {
     /// Live mode's swap thread, started on the first live frame.
     async_swap: Option<AsyncSwap>,
     enhancer: SharedEnhancer,
+    /// Whether `enhancer` holds the restorer, known without locking it (the restoration thread
+    /// holds the lock for a whole restoration).
+    enhancer_loaded: bool,
     /// Live mode's restoration thread, started on the first live frame that restores.
     async_enhance: Option<AsyncEnhance>,
     masker: Masker,
@@ -154,29 +157,56 @@ pub struct Processor {
 }
 
 impl Processor {
-    pub fn new(engine: Engine) -> Result<Self> {
-        Ok(Self {
-            detector: Detector::new(&engine)?,
-            recognizer: Recognizer::new(&engine)?,
+    /// Load every model `settings` needs, all at once: creating a session is mostly CPU work in
+    /// ONNX Runtime and the execution provider, so they load side by side (a warm start to the first
+    /// frame on an RTX 4050: 3.1 s one after another, 2.4 s together; with restoration on, 5.0 s and
+    /// 4.4 s).
+    pub fn new(engine: Engine, settings: &Settings) -> Result<Self> {
+        let tracker = FaceTracker::default();
+        let region_size = tracker.config.region_size;
+        // The first session alone: the TensorRT for RTX plugin registers its operator domain then,
+        // and two sessions racing to do it fail ("domain is already exist").
+        let mut detector = Detector::new(&engine)?;
+        let sizes = [settings.detector_size, region_size];
+        let (detected, recognizer, swapper, enhancer) = if engine.concurrent_sessions() {
+            std::thread::scope(|scope| {
+                let recognizer = scope.spawn(|| Recognizer::new(&engine));
+                let swapper = scope.spawn(|| Swapper::new(&engine, settings.swap_model));
+                let enhancer = settings.enhance.then(|| scope.spawn(|| Enhancer::new(&engine)));
+                let detected = sizes.into_iter().try_for_each(|size| detector.prepare(size));
+                (detected, joined(recognizer), joined(swapper), enhancer.map(joined).transpose())
+            })
+        } else {
+            let detected = sizes.into_iter().try_for_each(|size| detector.prepare(size));
+            let enhancer = settings.enhance.then(|| Enhancer::new(&engine)).transpose();
+            (detected, Recognizer::new(&engine), Swapper::new(&engine, settings.swap_model), enhancer)
+        };
+        detected?;
+        let mut processor = Self {
+            detector,
+            recognizer: recognizer?,
             engine,
-            swapper: Arc::new(Mutex::new(None)),
-            swap_model: None,
+            swapper: Arc::new(Mutex::new(Some(swapper?))),
+            swap_model: Some(settings.swap_model),
             async_swap: None,
-            enhancer: Arc::new(Mutex::new(None)),
+            enhancer_loaded: settings.enhance,
+            enhancer: Arc::new(Mutex::new(enhancer?)),
             async_enhance: None,
             masker: Masker::default(),
             identity: None,
             condition: None,
             reference: None,
             flow: LandmarkFlow::default(),
-            tracker: FaceTracker::default(),
+            tracker,
             shape_masks: ShapeMasks(VecDeque::with_capacity(MASK_CACHE)),
             paste_mask: PasteMask::default(),
             reuse: SwapReuse::default(),
             restoration: Restoration::default(),
             fresh: Vec::new(),
             reused_crop: Vec::new(),
-        })
+        };
+        processor.masker.prepare(&processor.engine, &settings.mask_spec())?;
+        Ok(processor)
     }
 
     #[must_use]
@@ -225,22 +255,34 @@ impl Processor {
     }
 
     /// Load every model `settings` needs, so the first frame isn't slow.
+    /// Called every frame: does nothing once everything is loaded, and loads what a settings
+    /// change asks for, in parallel.
     pub fn prepare(&mut self, settings: &Settings) -> Result<()> {
-        if self.swap_model != Some(settings.swap_model) {
-            let mut current = async_swap::lock(&self.swapper);
-            (*current, self.swap_model) = (None, None); // free VRAM before loading the replacement
-            let swapper = Swapper::new(&self.engine, settings.swap_model)?;
+        let swap = (self.swap_model != Some(settings.swap_model)).then_some(settings.swap_model);
+        let enhance = settings.enhance && !self.enhancer_loaded;
+        if swap.is_some() {
+            // Free the old model's VRAM before loading the replacement.
+            (*async_swap::lock(&self.swapper), self.swap_model) = (None, None);
+        }
+        let (engine, detector, masker, spec) = (&self.engine, &mut self.detector, &mut self.masker, settings.mask_spec());
+        let sizes = [settings.detector_size, self.tracker.config.region_size];
+        let (swapper, enhancer, masks, detected) = std::thread::scope(|scope| {
+            let swapper = swap.map(|model| scope.spawn(move || Swapper::new(engine, model)));
+            let enhancer = enhance.then(|| scope.spawn(|| Enhancer::new(engine)));
+            let masks = masker.prepare(engine, &spec);
+            let detected = sizes.into_iter().try_for_each(|size| detector.prepare(size));
+            (swapper.map(joined), enhancer.map(joined), masks, detected)
+        });
+        if let Some(swapper) = swapper.transpose()? {
             self.condition = self.identity.as_ref().map(|id| swapper.condition(id).into());
-            (*current, self.swap_model) = (Some(swapper), Some(settings.swap_model));
+            (*async_swap::lock(&self.swapper), self.swap_model) = (Some(swapper), Some(settings.swap_model));
             self.reuse.invalidate_all();
         }
-        self.detector.prepare(settings.detector_size)?;
-        self.detector.prepare(self.tracker.config.region_size)?;
-        if settings.enhance && async_enhance::lock(&self.enhancer).is_none() {
-            let enhancer = Enhancer::new(&self.engine)?;
+        if let Some(enhancer) = enhancer.transpose()? {
             *async_enhance::lock(&self.enhancer) = Some(enhancer);
+            self.enhancer_loaded = true;
         }
-        self.masker.prepare(&self.engine, &settings.mask_spec())
+        masks.and(detected)
     }
 
     /// Swap faces in `frame` in place. `live` enables temporal stabilisation.
@@ -266,7 +308,8 @@ impl Processor {
             if faces.len() != self.restoration.amounts.len() {
                 self.restoration.amounts.clear();
             }
-            let timewarp = live && timewarp_enabled();
+            // Its swap and restoration threads run sessions concurrently, which not every backend survives.
+            let timewarp = live && timewarp_enabled() && self.engine.concurrent_sessions();
             let budget = if live && !timewarp { settings.max_faces_per_frame } else { 0 };
             self.reuse.plan(&faces, budget, size, &mut self.fresh);
             if timewarp {
@@ -459,6 +502,11 @@ impl Processor {
 
 fn paste(frame: &mut Frame, crop: &AlignedCrop, mask: &[f32], opacity: f32) {
     paste_back(frame, &crop.pixels, mask, crop.size, &crop.to_crop, opacity);
+}
+
+/// The result of a scoped thread, re-raising its panic here.
+fn joined<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 fn elapsed_ms(since: Instant) -> f32 {

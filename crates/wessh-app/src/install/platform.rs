@@ -177,26 +177,16 @@ impl fmt::Display for Gpu {
 /// Every GPU we can identify without extra dependencies.
 #[must_use]
 pub fn detect_gpus(target: Target) -> Vec<Gpu> {
-    // Drivers older than R510 reject the `compute_cap` field (and with it the whole query).
-    let mut gpus = run_stdout("nvidia-smi", &["--query-gpu=name,driver_version,compute_cap", "--format=csv,noheader"])
-        .map(|out| parse_nvidia_smi(&out, true))
-        .or_else(|| {
-            run_stdout("nvidia-smi", &["--query-gpu=name,driver_version", "--format=csv,noheader"]).map(|out| parse_nvidia_smi(&out, false))
-        })
-        .unwrap_or_default();
+    // On Linux the driver describes its GPUs in /proc, which is read without starting a program;
+    // `nvidia-smi` is asked only when that doesn't say which architecture a GPU is.
+    let proc_gpus = if target.os == Os::Linux { linux_proc_gpus() } else { Vec::new() };
+    let mut gpus =
+        if !proc_gpus.is_empty() && proc_gpus.iter().all(|gpu| gpu.compute.is_some()) { proc_gpus.clone() } else { nvidia_smi_gpus() };
     let has_nvidia = !gpus.is_empty();
     match target.os {
         Os::Linux => {
-            if !has_nvidia
-                && let Some(driver) =
-                    std::fs::read_to_string("/proc/driver/nvidia/version").ok().and_then(|v| parse_proc_driver_version(&v))
-            {
-                gpus.push(Gpu {
-                    vendor: Vendor::Nvidia,
-                    name: "NVIDIA GPU (nvidia-smi not found)".to_owned(),
-                    driver: Some(driver),
-                    compute: None,
-                });
+            if !has_nvidia {
+                gpus.extend(proc_gpus);
             }
             let known_nvidia = !gpus.is_empty();
             gpus.extend(linux_drm_gpus().filter(|g| !(known_nvidia && g.vendor == Vendor::Nvidia)));
@@ -222,6 +212,67 @@ pub fn detect_gpus(target: Target) -> Vec<Gpu> {
         }
     }
     gpus
+}
+
+/// NVIDIA GPUs as `nvidia-smi` reports them.
+fn nvidia_smi_gpus() -> Vec<Gpu> {
+    // Drivers older than R510 reject the `compute_cap` field (and with it the whole query).
+    run_stdout("nvidia-smi", &["--query-gpu=name,driver_version,compute_cap", "--format=csv,noheader"])
+        .map(|out| parse_nvidia_smi(&out, true))
+        .or_else(|| {
+            run_stdout("nvidia-smi", &["--query-gpu=name,driver_version", "--format=csv,noheader"]).map(|out| parse_nvidia_smi(&out, false))
+        })
+        .unwrap_or_default()
+}
+
+/// NVIDIA GPUs from the driver's `/proc/driver/nvidia` files: the driver version, and each GPU's
+/// model, whose name tells its architecture.
+fn linux_proc_gpus() -> Vec<Gpu> {
+    let Some(driver) = std::fs::read_to_string("/proc/driver/nvidia/version").ok().and_then(|v| parse_proc_driver_version(&v)) else {
+        return Vec::new();
+    };
+    let models: Vec<String> = std::fs::read_dir("/proc/driver/nvidia/gpus")
+        .map(|dirs| {
+            dirs.flatten()
+                .filter_map(|dir| std::fs::read_to_string(dir.path().join("information")).ok())
+                .filter_map(|i| parse_proc_model(&i))
+                .collect()
+        })
+        .unwrap_or_default();
+    let names = if models.is_empty() { vec!["NVIDIA GPU".to_owned()] } else { models };
+    names
+        .into_iter()
+        .map(|name| Gpu { vendor: Vendor::Nvidia, compute: compute_from_name(&name), name, driver: Some(driver.clone()) })
+        .collect()
+}
+
+/// `Model:` line of `/proc/driver/nvidia/gpus/*/information`.
+fn parse_proc_model(information: &str) -> Option<String> {
+    information.lines().find_map(|line| line.strip_prefix("Model:")).map(|model| model.trim().to_owned()).filter(|m| !m.is_empty())
+}
+
+/// Compute capability by a marker in the GPU's name. Most specific first: "RTX PRO 6000
+/// Blackwell" and "RTX 2000 Ada" would otherwise match the GeForce series by their numbers.
+const NAME_FAMILIES: [(&str, (u32, u32)); 12] = [
+    ("BLACKWELL", (12, 0)),
+    ("ADA GENERATION", (8, 9)),
+    (" ADA", (8, 9)),
+    ("QUADRO RTX", (7, 5)),
+    ("TITAN RTX", (7, 5)),
+    ("RTX A", (8, 6)),
+    ("RTX 50", (12, 0)),
+    ("RTX 40", (8, 9)),
+    ("RTX 30", (8, 6)),
+    ("RTX 20", (7, 5)),
+    ("GTX 16", (7, 5)),
+    ("GTX 10", (6, 1)),
+];
+
+/// Compute capability of a GeForce / RTX GPU from its name, for the families whose name says it.
+/// `None` for anything else; the caller then asks `nvidia-smi`.
+fn compute_from_name(name: &str) -> Option<(u32, u32)> {
+    let name = name.to_ascii_uppercase();
+    NAME_FAMILIES.iter().find(|(marker, _)| name.contains(marker)).map(|&(_, compute)| compute)
 }
 
 /// GPUs registered with the kernel's DRM subsystem (`/sys/class/drm/cardN`).
@@ -396,6 +447,21 @@ mod tests {
         assert!(!gpus[1].is_rtx_capable());
         let old = parse_nvidia_smi("Quadro K620, 470.2\n", false);
         assert_eq!((old[0].name.as_str(), old[0].driver_major(), old[0].compute), ("Quadro K620", Some(470), None));
+    }
+
+    #[test]
+    fn architecture_from_the_model_name() {
+        let model = parse_proc_model("Model: \t\t NVIDIA GeForce RTX 4050 Laptop GPU\nIRQ:   \t\t 144\n").unwrap();
+        assert_eq!(model, "NVIDIA GeForce RTX 4050 Laptop GPU");
+        assert_eq!(compute_from_name(&model), Some((8, 9)));
+        assert_eq!(compute_from_name("NVIDIA GeForce RTX 3060"), Some((8, 6)));
+        assert_eq!(compute_from_name("NVIDIA GeForce RTX 5090"), Some((12, 0)));
+        assert_eq!(compute_from_name("NVIDIA RTX A4000"), Some((8, 6)));
+        assert_eq!(compute_from_name("NVIDIA RTX 2000 Ada Generation"), Some((8, 9)));
+        assert_eq!(compute_from_name("NVIDIA RTX PRO 6000 Blackwell Workstation Edition"), Some((12, 0)));
+        assert_eq!(compute_from_name("NVIDIA GeForce RTX 2080 Ti"), Some((7, 5)));
+        assert_eq!(compute_from_name("Quadro RTX 5000"), Some((7, 5)));
+        assert_eq!(compute_from_name("Tesla T4"), None);
     }
 
     #[test]

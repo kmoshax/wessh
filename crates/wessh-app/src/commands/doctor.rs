@@ -8,9 +8,11 @@ use anyhow::Result;
 use ort::ep::{CUDA, ExecutionProvider, TensorRT};
 use std::fmt::Display;
 use std::path::Path;
+use std::time::Instant;
 use wessh_core::assets::{self, data_dir};
+use wessh_core::face::Detector;
 use wessh_core::runtime::locate;
-use wessh_core::{Device, Engine};
+use wessh_core::{Device, Engine, Frame};
 
 const V4L2LOOPBACK_LOAD: &str = "sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=wessh exclusive_caps=1";
 
@@ -121,10 +123,53 @@ fn check_runtime(options: &Options, target: Target, recommended: Flavour, report
             row("providers", providers.join(", "));
             row("plugins", if plugins.is_empty() { "none (CPU only)".to_owned() } else { plugins.join(", ") });
             row("backend", format!("{} (with --device auto)", engine.backend()));
+            if let Some(reason) = engine.gpu_failure() {
+                report
+                    .problems
+                    .push(format!("inference falls back to the CPU: {reason}. Run `wessh setup` to install the runtime for this machine"));
+            }
+            check_inference(&engine, report);
         }
         Err(e) => {
             row("ONNX Runtime", library.display());
             report.problems.push(format!("{e}. Run `wessh setup --force` to reinstall ONNX Runtime {}", sources::ORT_VERSION));
+        }
+    }
+}
+
+/// Detection runs this many times after the first, for the time per frame.
+const INFERENCE_RUNS: u32 = 20;
+
+/// Run a model for real: a runtime can load and still fail (or crawl) once it has to compute.
+fn check_inference(engine: &Engine, report: &mut Report) {
+    if !assets::DETECTOR.path().exists() {
+        row("inference", "not checked (the face detector isn't downloaded yet)");
+        return;
+    }
+    let started = Instant::now();
+    let measured = Detector::new(engine).and_then(|mut detector| {
+        let loaded = started.elapsed();
+        let frame = Frame::new(1280, 720);
+        detector.detect(&frame)?;
+        let started = Instant::now();
+        for _ in 0..INFERENCE_RUNS {
+            detector.detect(&frame)?;
+        }
+        Ok((loaded, started.elapsed() / INFERENCE_RUNS))
+    });
+    match measured {
+        Ok((loaded, per_frame)) => row(
+            "inference",
+            format!(
+                "face detection {:.1} ms a frame on {} (loaded in {:.1} s)",
+                per_frame.as_secs_f64() * 1e3,
+                engine.backend(),
+                loaded.as_secs_f64()
+            ),
+        ),
+        Err(e) => {
+            row("inference", "fails");
+            report.problems.push(format!("the face detector fails on {}: {e}", engine.backend()));
         }
     }
 }

@@ -99,10 +99,15 @@ pub(super) fn run(engine: &EngineOptions, shared: &Arc<Shared>, inbox: &Receiver
 
 fn load(engine: &EngineOptions, shared: &Shared) -> anyhow::Result<Processor> {
     let engine = Engine::init(engine.runtime.as_deref(), engine.device)?;
-    shared.update(|s| s.backend = engine.backend().to_string());
-    let mut processor = Processor::new(engine)?;
-    processor.prepare(&shared.settings.lock().clone())?;
-    Ok(processor)
+    shared.update(|s| {
+        s.backend = engine.backend().to_string();
+        s.gpu_failure = engine.gpu_failure().map(str::to_owned);
+        if let Some(reason) = &s.gpu_failure {
+            s.notice = Some(format!("Running on the CPU: {reason}. Checking your hardware…"));
+        }
+    });
+    let settings = shared.settings.lock().clone();
+    Ok(Processor::new(engine, &settings)?)
 }
 
 fn handle(

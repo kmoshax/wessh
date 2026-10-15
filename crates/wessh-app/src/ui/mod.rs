@@ -18,6 +18,7 @@ mod tools;
 mod updater;
 
 use crate::cli::Options;
+use crate::install;
 use crate::jobs::JobRunner;
 use crate::live::{EngineOptions, LiveSession, Phase, Snapshot};
 use components::navigation::{RAIL_WIDTH, TOP_APP_BAR_HEIGHT};
@@ -28,6 +29,7 @@ use screens::onboarding::{EngineProgress, Next, Onboarding};
 use screens::{ImageScreen, LiveScreen, Screen, VideoScreen};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+use task::Task;
 use theme::{Brightness, ThemeConfig, spacing};
 
 const INITIAL_WINDOW: [f32; 2] = [1320.0, 840.0];
@@ -60,6 +62,10 @@ struct Shell {
     onboarding: Option<Box<Onboarding>>,
     /// The engine's workers, started before the app opens.
     engine: Option<Engine>,
+    /// The machine looked at again after the GPU runtime failed, at most once a run.
+    redetect: Option<Task<anyhow::Result<install::Host>>>,
+    /// Onboarding is installing a runtime this process can't switch to: restart when it is done.
+    relaunch: bool,
     app: Option<Box<App>>,
     theme: ThemeConfig,
     /// Design review capture, while onboarding shows (the app takes it over afterwards).
@@ -75,7 +81,9 @@ impl Shell {
         theme::install_fonts(ctx);
         theme::apply(ctx, theme);
         let onboarding = Onboarding::check(ctx, &options, dev.onboarding).map(Box::new);
-        let mut shell = Self { options, onboarding, engine: None, app: None, theme, capture: None, updater: updater::Updater::new(ctx) };
+        let updater = updater::Updater::new(ctx);
+        let mut shell =
+            Self { options, onboarding, engine: None, redetect: None, relaunch: false, app: None, theme, capture: None, updater };
         if shell.onboarding.is_some() {
             shell.capture = dev.capture;
         } else {
@@ -84,11 +92,37 @@ impl Shell {
         shell
     }
 
+    /// When the installed GPU runtime failed and inference fell back to the CPU, look at the
+    /// machine again (once): a new GPU or driver may want another runtime, which onboarding then
+    /// installs, without the user having to run `wessh setup`.
+    fn recover_gpu(&mut self, ctx: &Context) {
+        let Some(app) = &self.app else { return };
+        if self.redetect.is_none() && app.session.snapshot().gpu_failure.is_some() {
+            let device = self.options.device;
+            let mut task = Task::default();
+            task.spawn(ctx, move || install::Host::for_device(device));
+            self.redetect = Some(task);
+        }
+        let Some(Ok(host)) = self.redetect.as_mut().and_then(Task::poll) else { return };
+        if let Some(onboarding) = Onboarding::for_host(ctx, &self.options, host) {
+            (self.app, self.engine, self.relaunch) = (None, None, true);
+            self.onboarding = Some(Box::new(onboarding));
+        }
+    }
+
     /// Show the app, on the engine started during onboarding (or now).
     fn open_app(&mut self, ctx: &Context) {
         self.onboarding = None;
         let Engine { session, jobs, .. } = self.engine.take().unwrap_or_else(|| Engine::start(ctx, &self.options));
         self.app = Some(Box::new(App::new(ctx, session, jobs, self.theme)));
+    }
+}
+
+/// Start this program again with the same arguments, and close this window.
+fn relaunch(ctx: &Context) {
+    let started = std::env::current_exe().and_then(|exe| std::process::Command::new(exe).args(std::env::args_os().skip(1)).spawn());
+    if started.is_ok() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 
@@ -129,12 +163,17 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         if let Some(onboarding) = &mut self.onboarding {
-            if onboarding.is_done() && self.engine.is_none() {
+            // After a GPU runtime failed, this process can't load its replacement: it restarts instead.
+            if onboarding.is_done() && self.engine.is_none() && !self.relaunch {
                 self.engine = Some(Engine::start(ctx, &self.options));
             }
             let progress = self.engine.as_mut().map(Engine::progress);
             if onboarding.ui(ui, progress.as_ref()) == Next::OpenApp {
-                self.open_app(ctx);
+                if self.relaunch {
+                    relaunch(ctx);
+                } else {
+                    self.open_app(ctx);
+                }
             } else if let Some(capture) = &mut self.capture {
                 capture.update(ctx, &Phase::Ready);
             }
@@ -143,6 +182,7 @@ impl eframe::App for Shell {
                 .show(ctx, |ui| self.updater.button(ui));
         } else if let Some(app) = &mut self.app {
             app.update(ui, frame, &mut self.updater);
+            self.recover_gpu(ctx);
         }
         let busy = self.app.as_ref().is_some_and(|app| app.jobs.is_busy());
         if self.updater.ui(ctx, busy) {
@@ -273,13 +313,15 @@ impl App {
 
 /// Inference backend readout; tonal while loading, primary once ready.
 fn backend_chip(ui: &mut egui::Ui, snapshot: &Snapshot) {
-    let (label, icon) = match &snapshot.phase {
-        Phase::Loading => ("Loading…".to_owned(), icons::HOURGLASS_TOP),
-        Phase::Failed(_) => ("Unavailable".to_owned(), icons::WARNING),
-        Phase::Ready | Phase::Live => (snapshot.backend.clone(), icons::MEMORY),
+    let (label, icon) = match (&snapshot.phase, &snapshot.gpu_failure) {
+        (Phase::Loading, _) => ("Loading…".to_owned(), icons::HOURGLASS_TOP),
+        (Phase::Failed(_), _) => ("Unavailable".to_owned(), icons::WARNING),
+        (Phase::Ready | Phase::Live, Some(_)) => (format!("{} · GPU unavailable", snapshot.backend), icons::WARNING),
+        (Phase::Ready | Phase::Live, None) => (snapshot.backend.clone(), icons::MEMORY),
     };
+    let hover = snapshot.gpu_failure.as_deref().unwrap_or("Inference backend");
     if !label.is_empty() {
-        ui.add(Chip::status(&label, false).icon(icon)).on_hover_text("Inference backend");
+        ui.add(Chip::status(&label, false).icon(icon)).on_hover_text(hover);
     }
 }
 

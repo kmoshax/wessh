@@ -88,6 +88,15 @@ impl Plugin {
         }
     }
 
+    /// What people call it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NvRtx => "TensorRT for RTX",
+            Self::WebGpu => "WebGPU",
+        }
+    }
+
     /// Name the plugin's devices report as their execution provider.
     #[must_use]
     pub const fn ep_name(self) -> &'static str {

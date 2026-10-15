@@ -186,6 +186,12 @@ impl Onboarding {
         Some(Self::new(ctx, plan, forced))
     }
 
+    /// The flow for what `host` (just detected) still needs, if anything.
+    pub fn for_host(ctx: &Context, options: &Options, host: Host) -> Option<Self> {
+        let plan = Plan::check(host, &request(options));
+        (!plan.is_complete()).then(|| Self::new(ctx, plan, None))
+    }
+
     fn new(ctx: &Context, plan: Plan, forced: Option<Step>) -> Self {
         let rows = plan
             .items

@@ -26,6 +26,8 @@ pub struct Snapshot {
     /// Transient notice (e.g. "no face in source image").
     pub notice: Option<String>,
     pub backend: String,
+    /// Why the installed GPU runtime isn't in use, when inference fell back to the CPU.
+    pub gpu_failure: Option<String>,
     pub has_source: bool,
     pub source_name: Option<String>,
     /// The accepted source photo, for offline jobs to load the same face.
