@@ -26,7 +26,7 @@ use fetch::{Cancelled, Download, Transfer};
 use platform::{Choice, Flavour, Gpu, Target};
 use progress::Rate;
 use sources::Wheel;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -514,12 +514,31 @@ fn install_item(item: &mut Item, index: usize, reporter: &Reporter) -> Result<()
         fetch::download(&download, &path, &reporter.cancel, &mut on_progress)?;
         if let Destination::Libraries(dir) = &item.destination {
             reporter.send(Event::Stage { item: index, stage: Stage::Extracting });
+            if item.kind == Kind::Runtime {
+                remove_bundled_providers(dir)?;
+            }
             archive::extract_libraries(&path, dir, &reporter.cancel)?;
             std::fs::remove_file(&path)?;
         }
     }
     item.installed = true;
     reporter.send(Event::Stage { item: index, stage: Stage::Done });
+    Ok(())
+}
+
+/// Remove the execution providers an earlier runtime build left in `runtime_dir`. The runtime
+/// replacing it brings its own; beside a CPU build, a CUDA build's would make it pass for a CUDA
+/// build, and [`Plan::check`] would ask for the runtime again on every start.
+fn remove_bundled_providers(runtime_dir: &Path) -> Result<()> {
+    for name in locate::BUNDLED_PROVIDERS {
+        let library = locate::provider_library(runtime_dir, name);
+        match std::fs::remove_file(&library) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(e).with_context(|| format!("cannot replace {}", library.display()));
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
 
@@ -686,5 +705,18 @@ mod tests {
         assert_eq!(plan.download_bytes(None), 100);
         assert_eq!(plan.download_bytes(Some(Kind::Model)), 0);
         assert!(plan.has_partial_downloads());
+    }
+
+    #[test]
+    fn a_new_runtime_drops_the_providers_of_the_old_one() {
+        let dir = std::env::temp_dir().join(format!("wessh-providers-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A CUDA build's providers, left behind by switching to a CPU build: only `cuda` here.
+        std::fs::write(locate::provider_library(&dir, "cuda"), b"").unwrap();
+        std::fs::write(dir.join(locate::RUNTIME_LIB), b"").unwrap();
+        assert!(locate::has_provider(&dir, "cuda"));
+        remove_bundled_providers(&dir).unwrap();
+        assert!(!locate::has_provider(&dir, "cuda") && dir.join(locate::RUNTIME_LIB).exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

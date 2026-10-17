@@ -75,7 +75,7 @@ fn check_runtime(options: &Options, target: Target, recommended: Flavour, report
         }
     };
     let runtime_dir = library.parent().unwrap_or(Path::new("."));
-    let mut plugins: Vec<&str> = ["cuda", "tensorrt"].into_iter().filter(|p| locate::has_provider(runtime_dir, p)).collect();
+    let mut plugins: Vec<&str> = locate::BUNDLED_PROVIDERS.into_iter().filter(|p| locate::has_provider(runtime_dir, p)).collect();
     plugins.extend(
         locate::Plugin::ALL.into_iter().filter(|&p| locate::plugin_library(runtime_dir, p).is_some()).map(locate::Plugin::dir_name),
     );

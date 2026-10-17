@@ -43,15 +43,24 @@ pub fn runtime_library(explicit: Option<&Path>) -> Result<PathBuf> {
         .ok_or_else(|| Error::RuntimeNotFound { searched: default_runtime_dir() })
 }
 
-/// Whether an execution provider plugin ships next to the runtime library.
+/// The execution providers the CUDA builds ship next to the runtime library.
+pub const BUNDLED_PROVIDERS: [&str; 2] = ["cuda", "tensorrt"];
+
+/// Where the runtime in `runtime_dir` keeps the library of its bundled execution provider `name`.
 #[must_use]
-pub fn has_provider(runtime_dir: &Path, name: &str) -> bool {
+pub fn provider_library(runtime_dir: &Path, name: &str) -> PathBuf {
     let file = if cfg!(target_os = "windows") {
         format!("onnxruntime_providers_{name}.dll")
     } else {
         format!("libonnxruntime_providers_{name}.so")
     };
-    runtime_dir.join(file).exists()
+    runtime_dir.join(file)
+}
+
+/// Whether an execution provider plugin ships next to the runtime library.
+#[must_use]
+pub fn has_provider(runtime_dir: &Path, name: &str) -> bool {
+    provider_library(runtime_dir, name).exists()
 }
 
 /// An execution provider shipped as a separate library on ONNX Runtime's plugin EP ABI, loaded
