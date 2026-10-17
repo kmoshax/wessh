@@ -77,11 +77,11 @@ model and without the enhancer, and report the median per-frame latency.
 
 ## Releases
 
-A push to main that bumps `version` in the root `Cargo.toml` runs `.github/workflows/release.yml`
-in full: it builds Linux x86-64 / arm64, Windows x86-64 and macOS arm64 / x86-64 archives with
-`scripts/package.sh`, runs the lints and tests, and publishes them with a `SHA256SUMS` file as
-release `vX.Y.Z`. The release notes list the commit subjects since the previous release (the
-app's update dialog shows them too), so write subjects for users. Other pushes skip the build.
+`.github/workflows/ci.yml` runs the checks above on every push. A push to main that bumps
+`version` in the root `Cargo.toml` also builds Linux x86-64 / arm64, Windows x86-64 and macOS
+arm64 / x86-64 archives with `scripts/package.sh` and, once the checks pass, publishes them with
+a `SHA256SUMS` file as release `vX.Y.Z`. The release notes list the commit subjects since the
+previous release (the app's update dialog shows them too), so write subjects for users.
 
 `sources::ORT_VERSION` in `crates/wessh-app/src/install/sources.rs` pins the ONNX Runtime
 release `wessh setup` installs; update it together with the `ort` crate.

@@ -1,16 +1,27 @@
 name: CI
 
+# One workflow for checks and releases, so each check runs once per commit.
+#
+# Every push and pull request: rustfmt, clippy and tests on Linux, Windows and macOS.
+# A push to main that bumps Cargo.toml's version also builds the portable archives (the binary
+# plus README and licenses; ONNX Runtime, CUDA and the models are not bundled, `wessh setup`
+# fetches the right ones), smoke-tests the AppImage, and publishes release vX.Y.Z, tagged by the
+# workflow, with notes listing the commit subjects since the previous release. A `v*` tag
+# publishes explicitly (a -suffix makes a pre-release); a manual run builds without publishing.
+
 on:
   push:
     branches: [main]
     paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
+    tags: ["v*"]
   pull_request:
     paths-ignore: ["docs/**", "**/*.md", "LICENSE"]
   workflow_dispatch:
 
+# A newer push to a pull request replaces its run; runs on main finish (one may be a release).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -22,16 +33,42 @@ env:
 # The toolchain comes from rust-toolchain.toml; rustup on the runners installs it on first use.
 
 jobs:
-  fmt:
-    name: rustfmt
+  version:
+    name: version
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+      build: ${{ steps.version.outputs.build }}
     steps:
       - uses: actions/checkout@v7
-      - run: rustup toolchain install
-      - run: cargo fmt --all --check
+      - name: detect a release
+        id: version
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          release=false
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+              exit 1
+            fi
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main && "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then
+            git fetch --no-tags --depth=1 origin "$BEFORE"
+            previous="$(git show "$BEFORE:Cargo.toml" | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)"
+            [[ "$version" == "$previous" ]] || release=true
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          build=$release
+          [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]] || build=true
+          echo "build=$build" >> "$GITHUB_OUTPUT"
 
   check:
-    name: clippy + test (${{ matrix.os }})
+    name: check (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +77,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
+      - name: rustfmt
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: checks
@@ -54,3 +94,152 @@ jobs:
         run: cargo run --profile ci --locked -- setup --dry-run
         env:
           WESSH_HOME: ${{ runner.temp }}/wessh
+
+  build:
+    name: build ${{ matrix.name }}
+    needs: version
+    if: needs.version.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Oldest supported Ubuntu keeps the glibc requirement low.
+          - { name: Linux x64, artifact: linux-x64, targets: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { name: Linux ARM64, artifact: linux-arm64, targets: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { name: Windows x64, artifact: windows-x64, targets: x86_64-pc-windows-msvc, os: windows-latest }
+          # Both Macs on one runner: the Intel build cross-compiles beside the native one.
+          - { name: macOS, artifact: macos, targets: aarch64-apple-darwin x86_64-apple-darwin, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install && rustup target add ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
+      - name: build
+        shell: bash
+        run: |
+          for target in ${{ matrix.targets }}; do
+            cargo build --release --locked --target "$target" -p wessh
+          done
+      - name: build Windows console executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $releaseDir = "target/${{ matrix.targets }}/release"
+          Copy-Item "$releaseDir/wessh.exe" "$releaseDir/wessh-gui.exe"
+          cargo build --release --locked --target ${{ matrix.targets }} -p wessh --features console
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "$releaseDir/wessh.exe" "$releaseDir/wessh-cli.exe"
+          Move-Item -Force "$releaseDir/wessh-gui.exe" "$releaseDir/wessh.exe"
+      - name: locate Windows installer compiler
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          $compilerPath = if ($compiler) { $compiler.Source } else { Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe' }
+          if (-not (Test-Path $compilerPath)) { throw 'Inno Setup compiler is missing from the runner' }
+          "ISCC=$compilerPath" >> $env:GITHUB_ENV
+      - name: prepare standalone Linux packaging
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file curl ca-certificates libx11-6 libxcursor1 libxrandr2 libxi6 libxinerama1 libxrender1 libxfixes3 libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1
+          arch="${{ matrix.targets }}"
+          arch="${arch%%-*}"
+          tools="$RUNNER_TEMP/appimage-tools"
+          mkdir -p "$tools"
+          curl -fL --retry 3 "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-$arch.AppImage" -o "$tools/linuxdeploy"
+          curl -fL --retry 3 "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$arch.AppImage" -o "$tools/appimagetool"
+          chmod +x "$tools/linuxdeploy" "$tools/appimagetool"
+          echo "LINUXDEPLOY=$tools/linuxdeploy" >> "$GITHUB_ENV"
+          echo "APPIMAGETOOL=$tools/appimagetool" >> "$GITHUB_ENV"
+      - name: package
+        shell: bash
+        run: |
+          for target in ${{ matrix.targets }}; do
+            if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+              scripts/package.sh "$target" "$GITHUB_REF_NAME"
+            else
+              scripts/package.sh "$target"
+            fi
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wessh-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+
+  appimage:
+    name: AppImage on Debian, Fedora and Arch
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: wessh-linux-x64
+          path: dist
+      - name: launch standalone application
+        run: |
+          chmod +x dist/*.AppImage
+          for image in debian:12 fedora:43 archlinux:latest; do
+            echo "::group::$image"
+            docker run --rm -v "$PWD:/work:ro" "$image" sh -ec '
+              if command -v apt-get >/dev/null; then
+                apt-get update && apt-get install -y xvfb xauth libgl1-mesa-dri libgl1
+              elif command -v dnf >/dev/null; then
+                dnf install -y xorg-x11-server-Xvfb xorg-x11-xauth mesa-dri-drivers mesa-libGL
+              else
+                pacman -Syu --noconfirm xorg-server-xvfb xorg-xauth mesa libglvnd
+              fi
+              bash /work/scripts/linux/smoke-test.sh /work/dist/wessh-linux-x86_64.AppImage
+            '
+            echo "::endgroup::"
+          done
+
+  publish:
+    needs: [version, check, build, appimage]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The commit subjects since the previous release; the app's update dialog shows them too.
+      - name: release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          previous="$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_SHA}^" 2>/dev/null || true)"
+          {
+            echo "## What's new"
+            echo
+            git log --no-merges --format='- %s' "${previous:+$previous..}$GITHUB_SHA" | grep -v '^- Release version' || true
+            if [[ -n "$previous" ]]; then
+              echo
+              echo "**Full changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$previous...v$VERSION"
+            fi
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        working-directory: dist
+        run: sha256sum wessh-* > SHA256SUMS
+      # Published right away: the installers fetch the latest published release.
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
+          tag_name: v${{ needs.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: ${{ runner.temp }}/notes.md
+          prerelease: ${{ contains(needs.version.outputs.version, '-') }}
