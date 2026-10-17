@@ -15,6 +15,10 @@
 //! large the face is. The crop keeps one alignment from frame to frame — this frame's crop is the
 //! next one's reference as it is — and is realigned only once the face has drifted away in it,
 //! so a frame costs one crop warp and the flow itself (0.7–1 ms in all).
+//!
+//! The same flow holds a face the detector misses for a moment (motion blur, a hand passing,
+//! a sharp turn): it is followed for up to [`HOLD_FRAMES`] frames, so it stays swapped instead
+//! of flashing the real face, and dropped as soon as the flow loses it.
 
 use crate::face::Face;
 use crate::geometry::{Affine, Landmarks5, Point, Template};
@@ -47,14 +51,23 @@ const DISAGREE: f32 = 0.06;
 const MAX_DRIFT: f32 = 4.0;
 /// A face whose centre moved by more than this many face sizes is a different face.
 const SAME_FACE_JUMP: f32 = 0.5;
+/// Frames a face the detector missed is followed by flow alone (a third of a second at 30 fps):
+/// the detector's misses last a frame or two, and a face that really left shouldn't linger.
+const HOLD_FRAMES: u32 = 10;
+/// Landmarks of a held face that must still be followed; the rest move with them.
+const MIN_HELD_LANDMARKS: usize = 3;
 
 /// One followed face: its last landmarks and the last frame's grey crop, through `to_crop`.
 #[derive(Debug, Default)]
 struct Track {
     landmarks: Landmarks5,
+    /// The face as last seen, for holding it.
+    face: Face,
     to_crop: Affine,
     pyramid: Pyramid,
     matched: bool,
+    /// Frames in a row the detector missed the face.
+    missed: u32,
 }
 
 impl Track {
@@ -79,10 +92,11 @@ impl LandmarkFlow {
         self.tracks.clear();
     }
 
-    /// Replace each face's detected landmarks with its tracked ones, fused with the detection.
-    pub fn refine(&mut self, frame: &Frame, faces: &mut [Face]) {
+    /// Replace each face's detected landmarks with its tracked ones, fused with the detection,
+    /// and append the faces the detector missed that flow still follows (see [`HOLD_FRAMES`]).
+    pub fn refine(&mut self, frame: &Frame, faces: &mut Vec<Face>) {
         self.tracks.iter_mut().for_each(|track| track.matched = false);
-        for face in faces {
+        for face in faces.iter_mut() {
             let size = face.size().max(1.0);
             let center = centroid(&face.landmarks);
             let nearest = self
@@ -120,9 +134,47 @@ impl LandmarkFlow {
                 track.anchor(frame, &face.landmarks, &mut self.bgr);
             }
             track.landmarks = face.landmarks;
+            track.face = face.clone();
             track.matched = true;
+            track.missed = 0;
+        }
+        for track in self.tracks.iter_mut().filter(|track| !track.matched && track.missed < HOLD_FRAMES) {
+            if let Some(face) = hold(track, frame, &mut self.bgr, &mut self.current) {
+                faces.push(face);
+            }
         }
         self.tracks.retain(|track| track.matched);
+    }
+}
+
+/// Follow `track`'s face, which the detector missed, into `frame`: the face moved by the flow
+/// of its landmarks, or `None` once too few of them can be followed.
+fn hold(track: &mut Track, frame: &Frame, bgr: &mut Vec<u8>, current: &mut Pyramid) -> Option<Face> {
+    grey_crop(frame, &track.to_crop, bgr, current);
+    let to_frame = track.to_crop.invert();
+    let moved: Vec<Option<Point>> =
+        track.landmarks.iter().map(|&p| follow(&track.pyramid, current, track.to_crop.apply(p)).map(|q| to_frame.apply(q))).collect();
+    let followed: Vec<Point> = track.landmarks.iter().zip(&moved).filter_map(|(p, q)| q.map(|q| [q[0] - p[0], q[1] - p[1]])).collect();
+    if followed.len() < MIN_HELD_LANDMARKS {
+        return None;
+    }
+    let shift = followed.iter().fold([0.0, 0.0], |[x, y], d| [x + d[0] / followed.len() as f32, y + d[1] / followed.len() as f32]);
+    for (landmark, moved) in track.landmarks.iter_mut().zip(moved) {
+        *landmark = moved.unwrap_or([landmark[0] + shift[0], landmark[1] + shift[1]]);
+    }
+    let [x0, y0, x1, y1] = track.face.bbox;
+    track.face =
+        Face { bbox: [x0 + shift[0], y0 + shift[1], x1 + shift[0], y1 + shift[1]], landmarks: track.landmarks, ..track.face.clone() };
+    std::mem::swap(&mut track.pyramid, current);
+    track.matched = true;
+    track.missed += 1;
+    Some(track.face.clone())
+}
+
+impl LandmarkFlow {
+    #[cfg(test)]
+    fn tracks(&self) -> usize {
+        self.tracks.len()
     }
 }
 
@@ -273,10 +325,10 @@ mod tests {
     #[test]
     fn follows_motion_and_damps_detector_jitter() {
         let mut flow = LandmarkFlow::default();
-        flow.refine(&frame(0.0), &mut [face(LANDMARKS)]);
+        flow.refine(&frame(0.0), &mut vec![face(LANDMARKS)]);
         // The picture moves 6 px right; the detector says 6 px plus 3 px of noise.
         let noisy = LANDMARKS.map(|[x, y]| [x + 9.0, y]);
-        let mut faces = [face(noisy)];
+        let mut faces = vec![face(noisy)];
         flow.refine(&frame(6.0), &mut faces);
         for (refined, truth) in faces[0].landmarks.iter().zip(LANDMARKS.map(|[x, y]| [x + 6.0, y])) {
             assert!(distance(*refined, truth) < 1.0, "{refined:?} vs {truth:?}");
@@ -284,12 +336,46 @@ mod tests {
     }
 
     #[test]
+    fn a_missed_face_is_held_while_flow_follows_it() {
+        let mut flow = LandmarkFlow::default();
+        let mut faces = vec![face(LANDMARKS)];
+        flow.refine(&frame(0.0), &mut faces);
+        // The detector misses the face, which moved 4 px.
+        let mut faces = Vec::new();
+        flow.refine(&frame(4.0), &mut faces);
+        assert_eq!(faces.len(), 1);
+        for (held, truth) in faces[0].landmarks.iter().zip(LANDMARKS.map(|[x, y]| [x + 4.0, y])) {
+            assert!(distance(*held, truth) < 1.0, "{held:?} vs {truth:?}");
+        }
+        // Not for ever.
+        for _ in 1..HOLD_FRAMES {
+            faces.clear();
+            flow.refine(&frame(4.0), &mut faces);
+            assert_eq!(faces.len(), 1);
+        }
+        faces.clear();
+        flow.refine(&frame(4.0), &mut faces);
+        assert_eq!((faces.len(), flow.tracks()), (0, 0));
+    }
+
+    #[test]
+    fn a_face_that_left_is_not_held() {
+        let mut flow = LandmarkFlow::default();
+        flow.refine(&frame(0.0), &mut vec![face(LANDMARKS)]);
+        let mut empty = Frame::new(400, 400);
+        empty.data.fill(128);
+        let mut faces = Vec::new();
+        flow.refine(&empty, &mut faces);
+        assert_eq!(faces, []);
+    }
+
+    #[test]
     fn a_detection_far_from_the_track_wins() {
         let mut flow = LandmarkFlow::default();
-        flow.refine(&frame(0.0), &mut [face(LANDMARKS)]);
+        flow.refine(&frame(0.0), &mut vec![face(LANDMARKS)]);
         // The picture didn't move, but the detector puts the face 15 px away (≈ 0.09 face sizes).
         let moved = LANDMARKS.map(|[x, y]| [x + 15.0, y]);
-        let mut faces = [face(moved)];
+        let mut faces = vec![face(moved)];
         flow.refine(&frame(0.0), &mut faces);
         assert_eq!(faces[0].landmarks, moved);
     }

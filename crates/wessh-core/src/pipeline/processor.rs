@@ -507,7 +507,10 @@ impl Processor {
         // Follow the raw (unsmoothed) positions of the faces being swapped.
         self.tracker.track(if live { &faces } else { &[] });
         if live && settings.stabilize {
+            let detected = faces.len();
             self.flow.refine(frame, &mut faces);
+            // Faces the detector missed but flow still follows: look for them again next frame.
+            self.tracker.also_track(&faces[detected..]);
         } else {
             self.flow.reset();
         }

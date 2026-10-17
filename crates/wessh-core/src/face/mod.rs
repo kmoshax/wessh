@@ -19,7 +19,7 @@ pub use swapper::Swapper;
 use crate::geometry::{Affine, Landmarks5};
 
 /// A detected face in frame coordinates.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Face {
     /// `[x1, y1, x2, y2]`.
     pub bbox: [f32; 4],

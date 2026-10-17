@@ -101,6 +101,11 @@ impl FaceTracker {
         self.faces.extend_from_slice(faces);
     }
 
+    /// Follow `faces` too, beside those given to [`FaceTracker::track`].
+    pub fn also_track(&mut self, faces: &[Face]) {
+        self.faces.extend_from_slice(faces);
+    }
+
     /// Re-find every tracked face in its search square; `None` if any of them is lost.
     fn detect_regions(&self, source: &mut impl FaceSource, frame: &Frame) -> Result<Option<Vec<Face>>> {
         let mut found = Vec::with_capacity(self.faces.len());
