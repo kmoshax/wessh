@@ -43,7 +43,8 @@ pub struct Options {
     #[arg(long, global = true, default_value_t = 640)]
     pub detector_size: usize,
     /// Swapped face resolution: 256/384/512 run a 128 px model on sub-sampled tiles (much sharper,
-    /// costs (size/128)² swaps per face; great for images and video). 0 = model's native size.
+    /// costs (size/128)² swaps per face; great for images and video). 0 = automatic: 256 for
+    /// large faces on a fast GPU, otherwise the model's native size.
     #[arg(long, global = true, default_value_t = Settings::default().pixel_boost)]
     pub pixel_boost: usize,
     /// Keep hands, hair and glasses in front of the face (`XSeg` occlusion mask).

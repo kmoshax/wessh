@@ -8,7 +8,7 @@ use crate::ui::icons;
 use crate::ui::theme::{self, TypeRole, spacing};
 use eframe::egui::{Align, Layout, Ui};
 use wessh_core::pipeline::FaceOrder;
-use wessh_core::pipeline::pixel_boost::boosted_size;
+use wessh_core::pipeline::pixel_boost::{AUTO, AUTO_SIZE, boosted_size};
 
 // ── Swap ───────────────────────────────────────────────────────────────────────
 
@@ -43,13 +43,20 @@ pub(super) fn swap(ui: &mut Ui, frame: &mut Frame<'_>) {
 
 /// Output-size segments (whole multiples of the model's `native` resolution up to
 /// [`MAX_BOOST_SIZE`]) with the swap-time cost of the current choice.
-/// `boost` stores `0` for the model's native size, as [`wessh_core::Settings`] expects.
+/// `boost` stores [`AUTO`] or the size, as [`wessh_core::Settings`] expects.
 fn pixel_boost(ui: &mut Ui, native: usize, boost: &mut usize) {
-    let labels: Vec<(usize, String)> = boost_sizes(native).map(|size| (size, size.to_string())).collect();
+    let mut labels = vec![(AUTO, "Auto".to_owned())];
+    labels.extend(boost_sizes(native).map(|size| (size, size.to_string())));
     let options: Vec<(usize, &str)> = labels.iter().map(|(size, label)| (*size, label.as_str())).collect();
-    let mut size = boosted_size(native, *boost);
-    let factor = (size / native).pow(2);
-    let cost = if factor == 1 { "native speed".to_owned() } else { format!("×{factor} slower") };
+    let mut size = if *boost == AUTO { AUTO } else { boosted_size(native, *boost) };
+    let factor = (boosted_size(native, size) / native).pow(2);
+    let cost = if size == AUTO && native < AUTO_SIZE {
+        format!("{AUTO_SIZE} for close faces")
+    } else if factor == 1 {
+        "native speed".to_owned()
+    } else {
+        format!("×{factor} slower")
+    };
     let colors = theme::colors(ui.ctx());
     ui.add_space(spacing::XS);
     ui.horizontal(|ui| {
@@ -60,7 +67,7 @@ fn pixel_boost(ui: &mut Ui, native: usize, boost: &mut usize) {
         });
     });
     if ui.add(SegmentedButton::new(&mut size, &options)).changed() {
-        *boost = if size == native { 0 } else { size };
+        *boost = size;
     }
 }
 

@@ -162,6 +162,8 @@ pub struct Processor {
     fresh: Vec<bool>,
     /// A reused face's crop being pasted.
     reused_crop: Vec<u8>,
+    /// The swap crop size in use (see [`pixel_boost::choose_size`]).
+    swap_size: usize,
 }
 
 impl Processor {
@@ -212,6 +214,7 @@ impl Processor {
             restoration: Restoration::default(),
             fresh: Vec::new(),
             reused_crop: Vec::new(),
+            swap_size: settings.swap_model.resolution(),
         };
         processor.masker.prepare(&processor.engine, &settings.mask_spec())?;
         Ok(processor)
@@ -308,7 +311,7 @@ impl Processor {
             stats.detect_ms = elapsed_ms(started);
 
             let swap_started = Instant::now();
-            let size = pixel_boost::boosted_size(settings.swap_model.resolution(), settings.pixel_boost);
+            let size = self.choose_swap_size(&faces, settings);
             if settings.enhance {
                 self.restoration.original.clear();
                 self.restoration.original.extend(faces.iter().map(|f| detail_region(frame, f).map_or(0.0, |r| detail(frame, r))));
@@ -402,6 +405,16 @@ impl Processor {
         Ok(stats)
     }
 
+    /// The swap crop size for this frame's faces (see [`pixel_boost::choose_size`]); unchanged
+    /// while there are none.
+    fn choose_swap_size(&mut self, faces: &[Face], settings: &Settings) -> usize {
+        if let Some(side) = faces.iter().map(|face| pixel_boost::crop_side(&face.landmarks)).reduce(f32::max) {
+            let fast = matches!(self.engine.backend(), Backend::NvRtx | Backend::TensorRt | Backend::Cuda | Backend::CoreMl);
+            self.swap_size = pixel_boost::choose_size(settings.swap_model.resolution(), settings.pixel_boost, side, self.swap_size, fast);
+        }
+        self.swap_size
+    }
+
     /// Async timewarp's part of a frame: land the swap that finished, mark the faces without a
     /// crop to be swapped right away (`fresh`), and hand the next face to the swap thread. Runs
     /// before anything is pasted, so the crop handed over is the camera's.
@@ -452,7 +465,7 @@ impl Processor {
         live: bool,
         fresh: bool,
     ) -> Result<()> {
-        let size = pixel_boost::boosted_size(settings.swap_model.resolution(), settings.pixel_boost);
+        let size = self.swap_size;
         let Swapped { mut face, original } = if fresh {
             // Waits for a swap the swap thread has in flight.
             let mut swapper = async_swap::lock(&self.swapper);

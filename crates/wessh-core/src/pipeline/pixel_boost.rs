@@ -3,6 +3,9 @@
 //! tile `(a, b)` holds pixels `(y·factor + a, x·factor + b)` — each a slightly shifted
 //! native-size view of the face. The tiles are swapped as one batch and interleaved back, so
 //! a 128 px inswapper yields a genuinely sharper 256/384/512 px face.
+//!
+//! [`AUTO`] boosts only faces large enough to need it: a face close to a webcam spans 400 px
+//! and more, and its native 128 px swap, stretched over it, shows blocky edges (glasses, eyelids).
 
 use crate::Result;
 use crate::face::{AlignedCrop, Swapper};
@@ -13,6 +16,40 @@ use crate::image::{Frame, warp_crop};
 #[must_use]
 pub fn boosted_size(native: usize, requested: usize) -> usize {
     (requested / native).max(1) * native
+}
+
+/// The pixel boost that picks the size by itself (see [`choose_size`]).
+pub const AUTO: usize = 0;
+/// What [`AUTO`] boosts a large face to: inswapper's 128 px twice over. 4 swaps per face, 68 ms
+/// instead of 16 ms on an RTX 4050; async timewarp keeps the frame rate, the expression trails
+/// a little more.
+pub const AUTO_SIZE: usize = 256;
+/// [`AUTO`] goes back to the native size only once the face's crop has shrunk this far below
+/// [`AUTO_SIZE`], so a face hovering at the threshold doesn't switch back and forth (each switch
+/// costs a synchronous swap).
+const AUTO_HYSTERESIS: f32 = 0.8;
+
+/// The swap crop size for `requested` (a size, or [`AUTO`]) with the largest face's crop
+/// spanning `crop_side` frame pixels (see [`crop_side`]), `current` the size used so far.
+/// [`AUTO`] boosts only on a backend `fast` enough to swap four tiles per face.
+#[must_use]
+pub fn choose_size(native: usize, requested: usize, crop_side: f32, current: usize, fast: bool) -> usize {
+    if requested != AUTO {
+        return boosted_size(native, requested);
+    }
+    if !fast || native >= AUTO_SIZE {
+        return native;
+    }
+    let threshold = if current >= AUTO_SIZE { AUTO_SIZE as f32 * AUTO_HYSTERESIS } else { AUTO_SIZE as f32 };
+    if crop_side >= threshold { boosted_size(native, AUTO_SIZE) } else { native }
+}
+
+/// Side, in frame pixels, of the aligned swap crop of the face at `landmarks`: what a swap of
+/// any size is stretched over.
+#[must_use]
+pub fn crop_side(landmarks: &Landmarks5) -> f32 {
+    let [a, _, _, d, _, _] = Template::Arcface128.align(landmarks, 1).0;
+    1.0 / a.hypot(d)
 }
 
 /// A swapped face plus the original crop it replaced (same size and alignment).
@@ -104,6 +141,30 @@ mod tests {
         assert_eq!(boosted_size(128, 400), 384);
         assert_eq!(boosted_size(256, 256), 256);
         assert_eq!(boosted_size(256, 512), 512);
+    }
+
+    #[test]
+    fn auto_boosts_large_faces_only() {
+        let auto = |side, current, fast| choose_size(128, AUTO, side, current, fast);
+        assert_eq!(auto(180.0, 128, true), 128);
+        assert_eq!(auto(300.0, 128, true), 256);
+        // Not on a slow backend, nor for models that are already 256 px.
+        assert_eq!(auto(300.0, 128, false), 128);
+        assert_eq!(choose_size(256, AUTO, 600.0, 256, true), 256);
+        // Between the two thresholds, the size stays as it was.
+        assert_eq!(auto(230.0, 256, true), 256);
+        assert_eq!(auto(230.0, 128, true), 128);
+        assert_eq!(auto(190.0, 256, true), 128);
+        // A size asked for is kept.
+        assert_eq!(choose_size(128, 384, 50.0, 128, false), 384);
+    }
+
+    #[test]
+    fn the_crop_side_is_measured_in_frame_pixels() {
+        let points = Template::Arcface128.points();
+        // A face whose landmarks sit where a 300 px crop would put them.
+        let landmarks = points.map(|[x, y]| [x * 300.0 + 40.0, y * 300.0 + 10.0]);
+        assert!((crop_side(&landmarks) - 300.0).abs() < 0.5);
     }
 
     #[test]
