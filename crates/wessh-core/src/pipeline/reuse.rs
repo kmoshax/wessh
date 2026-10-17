@@ -11,6 +11,7 @@
 use crate::face::Face;
 use crate::geometry::{Affine, Point};
 use crate::image::{Frame, warp_crop_into};
+use rayon::prelude::*;
 use std::time::{Duration, Instant};
 
 /// A face whose centre jumped by more than this many face sizes since the last frame is
@@ -18,7 +19,7 @@ use std::time::{Duration, Instant};
 const SAME_FACE_JUMP: f32 = 0.5;
 
 /// Last swapped crop of one face (by position in the frame's face list).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Slot {
     center: Point,
     size: f32,
@@ -33,9 +34,10 @@ struct Slot {
     taken: Option<Instant>,
     /// Counts the crops stored, so a consumer can tell when it changed.
     version: u64,
-    /// The aligned camera crop `crop` was swapped from, and its alignment.
+    /// The aligned camera crop `crop` was swapped from, its alignment, and its thumbnail.
     source: Vec<u8>,
     to_crop: Affine,
+    seen: Thumbnail,
 }
 
 /// Decides which faces are swapped afresh and keeps every face's last swapped crop.
@@ -44,6 +46,8 @@ pub struct SwapReuse {
     slots: Vec<Slot>,
     /// A face's region of the current frame, for [`SwapReuse::change`].
     scratch: Vec<u8>,
+    /// The face `scratch` holds and its change, while neither the frame nor its swap changed.
+    measured: Option<(usize, f32)>,
     /// Next face in the round-robin.
     cursor: usize,
 }
@@ -54,6 +58,7 @@ impl SwapReuse {
     /// the next ones in turn, `budget` in total (more only when that many faces are new).
     pub fn plan(&mut self, faces: &[Face], budget: usize, crop_size: usize, fresh: &mut Vec<bool>) {
         fresh.clear();
+        self.measured = None;
         if self.slots.len() < faces.len() {
             self.slots.resize_with(faces.len(), Slot::default);
         }
@@ -86,6 +91,7 @@ impl SwapReuse {
     /// Remember the swap output for face `index`, swapped from `source` in a frame captured just
     /// now. A swap of the face still in flight is older, so it is marked stale.
     pub fn store(&mut self, index: usize, crop: &[u8], source: &[u8], to_crop: &Affine, crop_size: usize) {
+        self.measured = None;
         let slot = &mut self.slots[index];
         slot.generation += 1;
         slot.fill(crop, source, to_crop, crop_size, Instant::now());
@@ -107,6 +113,7 @@ impl SwapReuse {
         match self.slots.get_mut(index) {
             Some(slot) if slot.generation == generation => {
                 slot.fill(crop, source, to_crop, crop_size, taken);
+                self.measured = None;
                 true
             }
             _ => false,
@@ -117,11 +124,38 @@ impl SwapReuse {
     /// [`largest_block_change`]), `None` without a swap. Both are cropped through the swap's own
     /// alignment, so the detector's frame-to-frame landmark jitter on a still face (a few pixels,
     /// in scale and rotation too) doesn't count — only the picture changing does.
+    /// Measured once per frame and face (call [`SwapReuse::plan`] first on every frame).
     pub fn change(&mut self, index: usize, frame: &Frame) -> Option<f32> {
+        if let Some((measured, change)) = self.measured
+            && measured == index
+        {
+            return Some(change);
+        }
         let slot = self.slots.get(index).filter(|slot| slot.valid && !slot.source.is_empty())?;
         self.scratch.resize(slot.source.len(), 0);
         warp_crop_into(frame, &slot.to_crop, slot.crop_size, &mut self.scratch);
-        Some(largest_block_change(&slot.source, &self.scratch, slot.crop_size))
+        let change = largest_block_change(&slot.seen, &thumbnail(&self.scratch, slot.crop_size));
+        self.measured = Some((index, change));
+        Some(change)
+    }
+
+    /// How far face `index`'s swap is from `crop`, the face as it is now through its *current*
+    /// alignment (0–255; see [`largest_block_change`]), `None` without a swap: what pasting the
+    /// swap through the current alignment can't make up for — the expression, the head turning,
+    /// motion blur.
+    pub fn mismatch(&self, index: usize, crop: &[u8]) -> Option<f32> {
+        let slot = self.slots.get(index).filter(|slot| slot.valid && slot.source.len() == crop.len())?;
+        Some(largest_block_change(&slot.seen, &thumbnail(crop, slot.crop_size)))
+    }
+
+    /// The alignment face `index` was swapped in, with the face through it now, when that fits
+    /// its swap better than `crop` (the face through its current alignment) does: the face hasn't
+    /// moved since, and the current alignment differs only by the detector's landmark jitter,
+    /// which would shift the pasted swap about over a still face.
+    pub fn steadier(&mut self, index: usize, frame: &Frame, crop: &[u8]) -> Option<(Affine, &[u8])> {
+        let current = self.mismatch(index, crop)?;
+        let change = self.change(index, frame)?;
+        (change < current).then(|| (self.slots[index].to_crop, self.scratch.as_slice()))
     }
 
     /// Whether face `index` has a crop to paste.
@@ -167,6 +201,24 @@ impl SwapReuse {
     }
 }
 
+impl Default for Slot {
+    fn default() -> Self {
+        Self {
+            center: Point::default(),
+            size: 0.0,
+            crop: Vec::new(),
+            crop_size: 0,
+            valid: false,
+            generation: 0,
+            taken: None,
+            version: 0,
+            source: Vec::new(),
+            to_crop: Affine::default(),
+            seen: [0; THUMB * THUMB],
+        }
+    }
+}
+
 impl Slot {
     fn invalidate(&mut self) {
         self.valid = false;
@@ -178,6 +230,7 @@ impl Slot {
         self.crop.extend_from_slice(crop);
         self.source.clear();
         self.source.extend_from_slice(source);
+        self.seen = thumbnail(source, crop_size);
         (self.to_crop, self.crop_size, self.valid, self.taken) = (*to_crop, crop_size, true, Some(taken));
         self.version += 1;
     }
@@ -185,33 +238,38 @@ impl Slot {
 
 /// Side of the grey thumbnails crops are compared at (4 px cells of a 128 px crop), which also
 /// averages away the camera's sensor noise.
-const THUMB: usize = 32;
+pub(super) const THUMB: usize = 32;
 /// Thumbnail cells per side of a compared block (16 px of a 128 px crop: about a mouth corner),
 /// so a local change isn't averaged away by the rest of the face.
 const BLOCK: usize = 4;
 
-/// How differently `a` and `b` (`size`² BGR) look: the largest mean grey difference (0–255) of
-/// a block.
-fn largest_block_change(a: &[u8], b: &[u8], size: usize) -> f32 {
-    let (a, b) = (thumbnail(a, size), thumbnail(b, size));
+/// A crop shrunk for comparing: see [`thumbnail`].
+pub(super) type Thumbnail = [u8; THUMB * THUMB];
+
+/// How differently two crops look: the largest mean grey difference (0–255) of a block of their
+/// thumbnails.
+fn largest_block_change(a: &Thumbnail, b: &Thumbnail) -> f32 {
     let blocks = THUMB / BLOCK;
     let mut sums = [0u32; (THUMB / BLOCK) * (THUMB / BLOCK)];
-    for (i, (p, q)) in a.iter().zip(&b).enumerate() {
+    for (i, (p, q)) in a.iter().zip(b).enumerate() {
         let (y, x) = (i / THUMB, i % THUMB);
         sums[(y / BLOCK) * blocks + x / BLOCK] += u32::from(p.abs_diff(*q));
     }
     sums.into_iter().max().unwrap_or_default() as f32 / (BLOCK * BLOCK) as f32
 }
 
-/// A [`THUMB`]² grey box-filtered copy of a `size`² BGR crop.
-fn thumbnail(crop: &[u8], size: usize) -> [u8; THUMB * THUMB] {
+/// A [`THUMB`]² grey box-filtered copy of a `size`² BGR crop, a row of cells per thread.
+pub(super) fn thumbnail(crop: &[u8], size: usize) -> Thumbnail {
     let mut sums = [0u32; THUMB * THUMB];
-    for (y, row) in crop.chunks_exact(size * 3).take(size).enumerate() {
-        let cells = &mut sums[(y * THUMB / size) * THUMB..][..THUMB];
-        for (x, p) in row.as_chunks::<3>().0.iter().enumerate() {
-            cells[x * THUMB / size] += u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+    sums.par_chunks_mut(THUMB).enumerate().for_each(|(cell_y, cells)| {
+        // The crop rows `y` with `y * THUMB / size == cell_y`.
+        let rows = (cell_y * size).div_ceil(THUMB)..((cell_y + 1) * size).div_ceil(THUMB);
+        for row in crop.chunks_exact(size * 3).take(size).skip(rows.start).take(rows.len()) {
+            for (x, p) in row.as_chunks::<3>().0.iter().enumerate() {
+                cells[x * THUMB / size] += u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+            }
         }
-    }
+    });
     let per_cell = (3 * size * size / (THUMB * THUMB)).max(1) as u32;
     sums.map(|sum| (sum / per_cell).min(255) as u8)
 }
@@ -288,13 +346,14 @@ mod tests {
     fn a_local_change_is_not_averaged_away() {
         let size = 128;
         let face: Vec<u8> = (0..size * size).flat_map(|i| [(if i % size < 64 { 40 } else { 200 }) + (i / size) as u8 / 4; 3]).collect();
-        assert_eq!(largest_block_change(&face, &face, size), 0.0);
+        let changed = |a: &[u8], b: &[u8]| largest_block_change(&thumbnail(a, size), &thumbnail(b, size));
+        assert_eq!(changed(&face, &face), 0.0);
         // A mouth-sized patch opens: 16 px square going 60 levels darker, 1 % of the crop.
         let mut talking = face.clone();
         for y in 96..112 {
             talking[(y * size + 32) * 3..(y * size + 48) * 3].iter_mut().for_each(|v| *v = v.saturating_sub(60));
         }
-        assert_eq!(largest_block_change(&face, &talking, size), 60.0);
+        assert_eq!(changed(&face, &talking), 60.0);
     }
 
     #[test]
@@ -309,7 +368,26 @@ mod tests {
         reuse.store(0, &[0; 64 * 64 * 3], &[90; 64 * 64 * 3], &to_crop, size);
         assert_eq!(reuse.change(0, &frame), Some(0.0));
         frame.data.fill(130);
+        // The next frame.
+        reuse.plan(&[face_at(0.0)], 0, size, &mut Vec::new());
         assert_eq!(reuse.change(0, &frame), Some(40.0));
+    }
+
+    #[test]
+    fn a_still_face_keeps_its_swaps_alignment() {
+        let size = 64;
+        let mut frame = Frame::new(96, 96);
+        frame.data.fill(90);
+        let mut reuse = SwapReuse::default();
+        reuse.plan(&[face_at(0.0)], 0, size, &mut Vec::new());
+        let to_crop = Affine([1.0, 0.0, -8.0, 0.0, 1.0, -8.0]);
+        reuse.store(0, &[0; 64 * 64 * 3], &[90; 64 * 64 * 3], &to_crop, size);
+        // The landmarks moved but the picture didn't: the face's current crop looks different.
+        let current = [110; 64 * 64 * 3];
+        assert_eq!(reuse.mismatch(0, &current), Some(20.0));
+        assert_eq!(reuse.steadier(0, &frame, &current).map(|(affine, _)| affine), Some(to_crop));
+        // It fits the current crop better once the picture moved too.
+        assert!(reuse.steadier(0, &frame, &[90; 64 * 64 * 3]).is_none());
     }
 
     #[test]

@@ -11,10 +11,10 @@ use super::pixel_boost;
 use crate::face::Swapper;
 use crate::geometry::Affine;
 use crate::{Error, Result};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// The swap network, shared by the frame loop (synchronous swaps) and the swap thread.
 pub(super) type SharedSwapper = Arc<Mutex<Option<Swapper>>>;
@@ -43,6 +43,8 @@ pub(super) struct Done {
     pub size: usize,
     /// When the frame it was swapped from was captured.
     pub taken: Instant,
+    /// How long the swap network ran.
+    pub took: Duration,
     pub pixels: Result<Vec<u8>>,
     /// The aligned crop it was swapped from (hand it back with [`AsyncSwap::recycle`]) and its
     /// alignment.
@@ -58,6 +60,8 @@ pub(super) struct AsyncSwap {
     busy: bool,
     /// A crop buffer to reuse for the next job.
     spare: Vec<u8>,
+    /// How long the last swap took.
+    last: Option<Duration>,
 }
 
 impl AsyncSwap {
@@ -66,17 +70,19 @@ impl AsyncSwap {
         let (finished, done) = mpsc::channel();
         let thread = std::thread::Builder::new().name("swap".into()).spawn(move || {
             for job in inbox {
+                let started = Instant::now();
                 let pixels = match lock(&swapper).as_mut() {
                     Some(swapper) => pixel_boost::swap_aligned(swapper, &job.original, job.size, &job.condition),
                     None => Err(Error::UnexpectedOutput { model: "swapper", detail: "no swap model loaded".to_owned() }),
                 };
+                let took = started.elapsed();
                 let Job { slot, generation, original, to_crop, size, taken, .. } = job;
-                if finished.send(Done { slot, generation, size, taken, pixels, original, to_crop }).is_err() {
+                if finished.send(Done { slot, generation, size, taken, took, pixels, original, to_crop }).is_err() {
                     return;
                 }
             }
         })?;
-        Ok(Self { jobs: Some(jobs), done, thread: Some(thread), busy: false, spare: Vec::new() })
+        Ok(Self { jobs: Some(jobs), done, thread: Some(thread), busy: false, spare: Vec::new(), last: None })
     }
 
     /// A swap is in flight.
@@ -103,16 +109,35 @@ impl AsyncSwap {
     /// The swap that finished since the last call, if any.
     pub fn take(&mut self) -> Option<Done> {
         match self.done.try_recv() {
-            Ok(done) => {
-                self.busy = false;
-                Some(done)
-            }
+            Ok(done) => Some(self.landed(done)),
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 self.busy = false;
                 None
             }
         }
+    }
+
+    /// Wait up to `budget` for the swap in flight, when swaps have lately been that quick; `None`
+    /// when it didn't land in time (it lands on a later frame instead).
+    pub fn wait(&mut self, budget: Duration) -> Option<Done> {
+        if !self.busy || self.last.is_none_or(|last| last > budget) {
+            return None;
+        }
+        match self.done.recv_timeout(budget) {
+            Ok(done) => Some(self.landed(done)),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => {
+                self.busy = false;
+                None
+            }
+        }
+    }
+
+    fn landed(&mut self, done: Done) -> Done {
+        self.busy = false;
+        self.last = Some(done.took);
+        done
     }
 }
 

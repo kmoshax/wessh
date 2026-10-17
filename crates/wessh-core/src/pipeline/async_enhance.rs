@@ -4,8 +4,11 @@
 //! Every frame adds the newest residual to the face as it is now, through the face's current
 //! alignment: the skin, hair and outline keep their restored detail at camera rate, and the next
 //! restoration refreshes it. Once the face has changed since the restorer saw it, the eyes and
-//! mouth are left out of the residual, since they will have moved.
+//! mouth are left out of the residual, since they will have moved, and so is every part of the
+//! face that no longer looks as the restorer saw it: added there, the restored edges (glasses,
+//! eyebrows, hairline) of the old pose would show beside the new ones, a ghost of the face.
 
+use super::reuse::{THUMB, Thumbnail, thumbnail};
 use crate::face::{AlignedCrop, Enhancer, Face};
 use crate::geometry::{Landmarks5, Template};
 use crate::image::{Frame, warp_crop_into};
@@ -35,6 +38,10 @@ const FEATHER: f32 = 0.6;
 /// every 200 ms gave 30 fps (95th percentile 82 ms), every 500 ms 45 fps (74 ms); synchronous
 /// restoration, 7 fps.
 const RESTORE_INTERVAL: Duration = Duration::from_millis(500);
+/// Mean grey difference (0–255) of a 32 px cell of the aligned face between what the restorer
+/// saw and the face now, below which the residual is added whole, and above which none of it.
+const SAME_CELL: f32 = 4.0;
+const CHANGED_CELL: f32 = 12.0;
 
 struct Job {
     slot: usize,
@@ -50,6 +57,7 @@ struct Done {
     generation: u64,
     swap: u64,
     residual: Result<Vec<i16>>,
+    seen: Thumbnail,
     /// The job's buffers, handed back for the next one.
     input: Vec<u8>,
     base: Vec<u8>,
@@ -60,6 +68,8 @@ struct Residual {
     generation: u64,
     swap: u64,
     values: Vec<i16>,
+    /// The face it was taken from.
+    seen: Thumbnail,
 }
 
 /// What a face was last restored from.
@@ -80,6 +90,8 @@ pub(super) struct AsyncEnhance {
     cursor: usize,
     /// Per-pixel weight of the residual: 0 over the eyes and mouth.
     weights: Vec<f32>,
+    /// Per output column (and row), the thumbnail cells around it: see [`cell_span`].
+    spans: Vec<(usize, usize, f32)>,
     spare_input: Vec<u8>,
     spare_base: Vec<u8>,
     /// The face as it is now, at the output size, and the restored face handed out.
@@ -99,8 +111,9 @@ impl AsyncEnhance {
                 };
                 let residual =
                     restored.map(|restored| restored.iter().zip(&job.base).map(|(&r, &b)| i16::from(r) - i16::from(b)).collect());
+                let seen = thumbnail(&job.base, OUTPUT);
                 let Job { slot, generation, swap, input, base } = job;
-                if finished.send(Done { slot, generation, swap, residual, input, base }).is_err() {
+                if finished.send(Done { slot, generation, swap, residual, seen, input, base }).is_err() {
                     return;
                 }
             }
@@ -114,6 +127,7 @@ impl AsyncEnhance {
             restored: Vec::new(),
             cursor: 0,
             weights: feature_weights(),
+            spans: (0..OUTPUT).map(cell_span).collect(),
             spare_input: Vec::new(),
             spare_base: Vec::new(),
             base: Vec::new(),
@@ -133,7 +147,7 @@ impl AsyncEnhance {
                 (self.spare_input, self.spare_base) = (done.input, done.base);
                 let values = done.residual?;
                 if let Some(slot) = self.residuals.get_mut(done.slot) {
-                    *slot = Some(Residual { generation: done.generation, swap: done.swap, values });
+                    *slot = Some(Residual { generation: done.generation, swap: done.swap, values, seen: done.seen });
                 }
             }
             Err(TryRecvError::Empty) => {}
@@ -172,6 +186,7 @@ impl AsyncEnhance {
         let to_crop = Template::Ffhq512.align(landmarks, OUTPUT);
         self.base.resize(OUTPUT * OUTPUT * Frame::CHANNELS, 0);
         warp_crop_into(frame, &to_crop, OUTPUT, &mut self.base);
+        let unchanged = unchanged_cells(&residual.seen, &thumbnail(&self.base, OUTPUT));
         let mut pixels = std::mem::take(&mut self.pixels);
         pixels.resize(self.base.len(), 0);
         let row = OUTPUT * Frame::CHANNELS;
@@ -179,11 +194,22 @@ impl AsyncEnhance {
             .par_chunks_mut(row)
             .zip(self.base.par_chunks(row))
             .zip(residual.values.par_chunks(row))
-            .zip(self.weights.par_chunks(OUTPUT));
-        rows.for_each(|(((out, base), residual), weights)| {
-            for (((o, &b), &r), &w) in out.iter_mut().zip(base).zip(residual).zip(weights.iter().flat_map(|w| [w; Frame::CHANNELS])) {
-                let w = if exact { 1.0 } else { w };
-                *o = (f32::from(r).mul_add(w, f32::from(b))).round().clamp(0.0, 255.0) as u8;
+            .zip(self.weights.par_chunks(OUTPUT))
+            .enumerate();
+        let spans = &self.spans;
+        rows.for_each(|(y, (((out, base), residual), weights))| {
+            // The row's share of each column of cells, interpolated between cell rows.
+            let mut gate = [0.0; THUMB];
+            let (top, bottom, down) = spans[y];
+            for (g, (t, b)) in gate.iter_mut().zip(unchanged[top * THUMB..][..THUMB].iter().zip(&unchanged[bottom * THUMB..][..THUMB])) {
+                *g = down.mul_add(b - t, *t);
+            }
+            let pixels = out.as_chunks_mut::<3>().0.iter_mut().zip(base.as_chunks::<3>().0).zip(residual.as_chunks::<3>().0);
+            for ((((o, b), r), &feature), &(left, right, across)) in pixels.zip(weights).zip(spans) {
+                let w = if exact { 1.0 } else { feature } * across.mul_add(gate[right] - gate[left], gate[left]);
+                for ((o, &b), &r) in o.iter_mut().zip(b).zip(r) {
+                    *o = (f32::from(r).mul_add(w, f32::from(b))).round().clamp(0.0, 255.0) as u8;
+                }
             }
         });
         Some(AlignedCrop { pixels, size: OUTPUT, to_crop })
@@ -202,6 +228,24 @@ impl Drop for AsyncEnhance {
             let _ = thread.join();
         }
     }
+}
+
+/// Per thumbnail cell, how much of the residual still fits the face: 1 where it looks as the
+/// restorer saw it, 0 where it changed.
+fn unchanged_cells(seen: &Thumbnail, now: &Thumbnail) -> [f32; THUMB * THUMB] {
+    let mut cells = [0.0; THUMB * THUMB];
+    for ((cell, &a), &b) in cells.iter_mut().zip(seen).zip(now) {
+        *cell = ((CHANGED_CELL - f32::from(a.abs_diff(b))) / (CHANGED_CELL - SAME_CELL)).clamp(0.0, 1.0);
+    }
+    cells
+}
+
+/// The two thumbnail cells around output pixel `i` (along one axis) and how far it lies from
+/// the first towards the second, for bilinear interpolation between cell centres.
+fn cell_span(i: usize) -> (usize, usize, f32) {
+    let at = ((i as f32 + 0.5) * THUMB as f32 / OUTPUT as f32 - 0.5).clamp(0.0, (THUMB - 1) as f32);
+    let first = at as usize;
+    (first, (first + 1).min(THUMB - 1), at - first as f32)
 }
 
 /// 0 over the eyes and mouth of an aligned face, fading to 1 around them.
@@ -227,6 +271,25 @@ fn feature_weights() -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_residual_fades_out_where_the_face_changed() {
+        let seen = [100; THUMB * THUMB];
+        let mut now = seen;
+        now[0] = 100 + CHANGED_CELL as u8;
+        now[1] = 100 + SAME_CELL as u8;
+        now[2] = 100 - (SAME_CELL + CHANGED_CELL) as u8 / 2;
+        let cells = unchanged_cells(&seen, &now);
+        assert_eq!(&cells[..4], &[0.0, 1.0, 0.5, 1.0]);
+    }
+
+    #[test]
+    fn cells_are_interpolated_between_their_centres() {
+        let cell = OUTPUT / THUMB;
+        assert_eq!(cell_span(0), (0, 1, 0.0));
+        assert_eq!(cell_span(cell / 2), (0, 1, (0.5 / cell as f32)));
+        assert_eq!(cell_span(OUTPUT - 1), (THUMB - 1, THUMB - 1, 0.0));
+    }
 
     #[test]
     fn eyes_and_mouth_are_left_out() {

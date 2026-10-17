@@ -24,6 +24,14 @@ const SAME_FACE_CHANGE: f32 = 3.0;
 /// A face is swapped again at least this often however still it is, so a slow change (light
 /// fading, the camera's exposure settling) can't build up unnoticed.
 const MAX_SWAP_AGE: std::time::Duration = std::time::Duration::from_millis(500);
+/// A face whose last swap differs from it by more than this through its *current* alignment
+/// (see [`SwapReuse::mismatch`]) has moved in a way re-warping the swap can't follow: pasted, it
+/// would show the old pose over the new one, a ghost of the face. Still and talking faces measure
+/// 2–13 on a 720p webcam clip, a brisk head turn 20–65.
+const MOVED_TOO_MUCH: f32 = 14.0;
+/// How long such a frame may wait for its own swap; only when swaps have lately taken no longer
+/// (21 ms for inswapper on an RTX 4050), so a slow GPU never waits for nothing.
+const MOTION_WAIT: std::time::Duration = std::time::Duration::from_millis(30);
 
 /// Async timewarp ([`super::async_swap`]) in live mode, unless `WESSH_TIMEWARP=0` (to measure
 /// the synchronous pipeline).
@@ -403,11 +411,7 @@ impl Processor {
         }
         let worker = self.async_swap.as_mut().expect("started above");
         if let Some(done) = worker.take() {
-            let pixels = done.pixels?;
-            if done.size == size {
-                self.reuse.store_if_current(done.slot, done.generation, &pixels, &done.original, &done.to_crop, size, done.taken);
-            }
-            worker.recycle(done.original);
+            land(&mut self.reuse, worker, done, size)?;
         }
         for (index, fresh) in self.fresh.iter_mut().enumerate() {
             *fresh = !self.reuse.is_valid(index);
@@ -423,7 +427,12 @@ impl Processor {
                 let mut crop = worker.buffer();
                 crop.resize(size * size * Frame::CHANNELS, 0);
                 warp_crop_into(frame, &to_crop, size, &mut crop);
+                let moved = self.reuse.mismatch(next, &crop).is_some_and(|mismatch| mismatch > MOVED_TOO_MUCH);
                 worker.submit(next, self.reuse.generation(next), condition, crop, to_crop, size);
+                if moved && let Some(done) = worker.wait(MOTION_WAIT) {
+                    stats.swaps_awaited += 1;
+                    land(&mut self.reuse, worker, done, size)?;
+                }
             }
         }
         Ok(())
@@ -452,11 +461,17 @@ impl Processor {
             self.reuse.store(index, &swapped.face.pixels, &swapped.original, &swapped.face.to_crop, size);
             swapped
         } else {
-            // The last swap, pasted through the face's current alignment.
-            let to_crop = Template::Arcface128.align(&target.landmarks, size);
+            // The last swap, pasted through the face's current alignment, or its own while the
+            // face holds still.
+            let mut to_crop = Template::Arcface128.align(&target.landmarks, size);
+            let mut original = warp_crop(frame, &to_crop, size);
+            if let Some((steadier, crop)) = self.reuse.steadier(index, frame, &original) {
+                to_crop = steadier;
+                original.copy_from_slice(crop);
+            }
             let mut pixels = std::mem::take(&mut self.reused_crop);
             self.reuse.load(index, &mut pixels);
-            Swapped { face: AlignedCrop { pixels, size, to_crop }, original: warp_crop(frame, &to_crop, size) }
+            Swapped { face: AlignedCrop { pixels, size, to_crop }, original }
         };
 
         let mask_started = Instant::now();
@@ -498,6 +513,16 @@ impl Processor {
         }
         Ok(faces)
     }
+}
+
+/// Keep a swap the swap thread finished, unless its face changed since it was started.
+fn land(reuse: &mut SwapReuse, worker: &mut AsyncSwap, done: async_swap::Done, size: usize) -> Result<()> {
+    let pixels = done.pixels?;
+    if done.size == size {
+        reuse.store_if_current(done.slot, done.generation, &pixels, &done.original, &done.to_crop, size, done.taken);
+    }
+    worker.recycle(done.original);
+    Ok(())
 }
 
 fn paste(frame: &mut Frame, crop: &AlignedCrop, mask: &[f32], opacity: f32) {

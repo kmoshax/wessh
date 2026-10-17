@@ -10,6 +10,13 @@ use wessh_media::{Encoder, VideoInfo, VideoReader};
 /// hiccups, small enough that memory stays flat at 4K.
 const QUEUE: usize = 8;
 
+/// `WESSH_VIDEO_LIVE=1` renders a video as live mode would see it from a camera: with live
+/// stabilisation, async swap and restoration, one frame per frame interval (design review of
+/// live artefacts on repeatable footage).
+fn live_review() -> bool {
+    std::env::var("WESSH_VIDEO_LIVE").is_ok_and(|v| v == "1")
+}
+
 /// What to render.
 #[derive(Clone, Debug)]
 pub struct VideoJob<'a> {
@@ -90,11 +97,17 @@ pub fn render(
         });
 
         let swap_result = (|| -> Result<()> {
-            for mut frame in decoded {
+            let live = live_review();
+            let interval = Duration::from_secs_f64(1.0 / job.info.fps);
+            for (index, mut frame) in decoded.into_iter().enumerate() {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                processor.process(&mut frame, settings, false)?;
+                if live {
+                    // The camera delivers this frame at its time, whatever processing took.
+                    std::thread::sleep((started + interval * index as u32).saturating_duration_since(Instant::now()));
+                }
+                processor.process(&mut frame, settings, live)?;
                 progress.done += 1;
                 progress.elapsed = started.elapsed();
                 on_frame(&progress, &frame);
