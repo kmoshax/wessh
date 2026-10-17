@@ -169,6 +169,13 @@ impl Updater {
                 ui.label(TypeRole::TitleLarge.rich(format!("wessh {} is available", update.version), colors.on_surface));
                 ui.add_space(spacing::SM);
                 ui.label("Update the app without downloading your face models or runtime again.");
+                if !update.changes.is_empty() {
+                    ui.add_space(spacing::MD);
+                    ui.label(TypeRole::TitleSmall.rich("What's new", colors.on_surface));
+                    for change in &update.changes {
+                        ui.label(TypeRole::BodyMedium.rich(format!("•  {change}"), colors.on_surface_variant));
+                    }
+                }
                 if self.prepared.is_some() {
                     ui.add_space(spacing::MD);
                     ui.label("Download verified. Install and restart when you're ready. Save your work first.");

@@ -77,10 +77,11 @@ model and without the enhancer, and report the median per-frame latency.
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which builds Linux x86-64 /
-arm64, Windows x86-64 and macOS arm64 / x86-64 archives with `scripts/package.sh`, attaches
-them with a `SHA256SUMS` file to a draft GitHub release, and leaves it for review. Bump
-`version` in the root `Cargo.toml` first.
+A push to main that bumps `version` in the root `Cargo.toml` runs `.github/workflows/release.yml`
+in full: it builds Linux x86-64 / arm64, Windows x86-64 and macOS arm64 / x86-64 archives with
+`scripts/package.sh`, runs the lints and tests, and publishes them with a `SHA256SUMS` file as
+release `vX.Y.Z`. The release notes list the commit subjects since the previous release (the
+app's update dialog shows them too), so write subjects for users. Other pushes skip the build.
 
 `sources::ORT_VERSION` in `crates/wessh-app/src/install/sources.rs` pins the ONNX Runtime
 release `wessh setup` installs; update it together with the `ort` crate.
@@ -88,9 +89,8 @@ release `wessh setup` installs; update it together with the `ort` crate.
 ## Releasing
 
 1. Bump `version` in the workspace `Cargo.toml` (and run `cargo build` so `Cargo.lock` follows).
-2. Commit, then tag and push: `git tag v0.3.0 && git push origin main v0.3.0`.
-3. The Release workflow checks that the tag matches the version, runs the lints and tests,
-   builds Linux (x86-64, arm64), Windows and macOS (arm64, x86-64) archives and publishes them
-   with `SHA256SUMS`. The one-line installers pick up the new release immediately.
+2. Commit ("Release version 0.3.0", left out of the notes) and push to main. Don't push a tag
+   as well: the workflow creates it, and a second run would race the first.
+3. The one-line installers and the in-app updater pick up the new release once it is published.
 
-A tag with a suffix (`v0.3.0-rc.1`) is published as a pre-release, which the installers skip.
+Pushing a tag with a suffix (`v0.3.0-rc.1`) publishes a pre-release, which the installers skip.

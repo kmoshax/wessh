@@ -18,6 +18,8 @@ const REPO: &str = "kmoshax/wessh";
 #[derive(Clone, Debug)]
 pub struct Update {
     pub version: String,
+    /// What changed, one line per change, from the release notes.
+    pub changes: Vec<String>,
     pub download: Download,
     target: InstallTarget,
 }
@@ -79,6 +81,9 @@ impl InstallTarget {
 #[derive(Deserialize)]
 struct Release {
     tag_name: String,
+    /// The release notes (Markdown); the Release workflow lists the commits as `- subject` lines.
+    #[serde(default)]
+    body: Option<String>,
     draft: bool,
     prerelease: bool,
     assets: Vec<ReleaseAsset>,
@@ -110,6 +115,7 @@ pub fn check() -> Result<Option<Update>> {
     };
     Ok(Some(Update {
         version: version.to_string(),
+        changes: changes(release.body.as_deref().unwrap_or_default()),
         download: Download { url: asset.browser_download_url.clone(), file_name: name, size: Some(asset.size), sha256: Some(sha256) },
         target,
     }))
@@ -124,6 +130,20 @@ fn newer_version(release: &Release, current: &str) -> Result<Option<Version>> {
         return Ok(None);
     }
     Ok((version > Version::parse(current)?).then_some(version))
+}
+
+/// Changes listed in the update dialog, at most this many (the full notes are on GitHub).
+const MAX_CHANGES: usize = 8;
+
+/// The list items of release notes: their `- ` / `* ` lines.
+fn changes(notes: &str) -> Vec<String> {
+    notes
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- ").or_else(|| line.trim().strip_prefix("* ")))
+        .map(|change| change.trim().to_owned())
+        .filter(|change| !change.is_empty())
+        .take(MAX_CHANGES)
+        .collect()
 }
 
 fn checksum(manifest: &str, name: &str) -> Result<String> {
@@ -166,6 +186,7 @@ pub fn preview() -> Result<Update> {
     let target = InstallTarget::detect()?;
     Ok(Update {
         version: version.to_string(),
+        changes: vec!["Find network cameras on the local Wi-Fi".to_owned(), "Hold faces the detector misses".to_owned()],
         download: Download { url: String::new(), file_name: target.asset_name(), size: Some(13_000_000), sha256: None },
         target,
     })
@@ -189,7 +210,15 @@ mod tests {
     use super::*;
 
     fn release(tag: &str) -> Release {
-        Release { tag_name: tag.into(), draft: false, prerelease: false, assets: Vec::new() }
+        Release { tag_name: tag.into(), body: None, draft: false, prerelease: false, assets: Vec::new() }
+    }
+
+    #[test]
+    fn changes_are_the_notes_list_items() {
+        let notes = "## What's new\n\n- Find network cameras\n* Hold missed faces\n-   \n\n**Full changelog**: https://x";
+        assert_eq!(changes(notes), ["Find network cameras", "Hold missed faces"]);
+        let long = "- change\n".repeat(20);
+        assert_eq!(changes(&long).len(), MAX_CHANGES);
     }
 
     #[test]

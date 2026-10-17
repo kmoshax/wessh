@@ -3,8 +3,11 @@ name: Release
 # Portable archives: the binary plus README and licenses. ONNX Runtime, CUDA and the models are
 # not bundled; `wessh setup` fetches the right ones for each machine, which keeps downloads tiny.
 #
-# Main builds artifacts; a Cargo.toml version bump also publishes a release after all checks pass.
-# Version tags can still publish explicitly, and suffixes such as -rc.1 mark pre-releases.
+# A Cargo.toml version bump on main builds, checks and publishes a release, tagged by the
+# workflow, with notes listing the commits since the previous release. Other pushes to main only
+# run the quick version check (CI covers lints and tests); a manual run builds the archives
+# without publishing. Version tags can still publish explicitly, and suffixes such as -rc.1 mark
+# pre-releases.
 
 on:
   push:
@@ -22,11 +25,12 @@ env:
 
 jobs:
   verify:
-    name: verify version, lints and tests
+    name: verify version
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
+      build: ${{ steps.version.outputs.build }}
     steps:
       - uses: actions/checkout@v7
       - name: detect release version
@@ -44,6 +48,9 @@ jobs:
             [[ "$version" == "$previous" ]] || release=true
           fi
           echo "release=$release" >> "$GITHUB_OUTPUT"
+          build=false
+          if [[ "$release" == true || "$GITHUB_REF_TYPE" == tag || "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then build=true; fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
       - name: tag matches Cargo.toml
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -53,6 +60,14 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}"
             exit 1
           fi
+
+  checks:
+    name: lints and tests
+    needs: verify
+    if: needs.verify.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
@@ -63,6 +78,8 @@ jobs:
 
   build:
     name: build ${{ matrix.name }}
+    needs: verify
+    if: needs.verify.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -161,10 +178,30 @@ jobs:
           '
 
   publish:
-    needs: [verify, build, linux-portability]
+    needs: [verify, checks, build, linux-portability]
     if: startsWith(github.ref, 'refs/tags/') || needs.verify.outputs.release == 'true'
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # The commit subjects since the previous release; the app's update dialog shows them too.
+      - name: release notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          previous="$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_SHA}^" 2>/dev/null || true)"
+          {
+            echo "## What's new"
+            echo
+            git log --no-merges --format='- %s' "${previous:+$previous..}$GITHUB_SHA" | grep -v '^- Release version' || true
+            if [[ -n "$previous" ]]; then
+              echo
+              echo "**Full changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$previous...v$VERSION"
+            fi
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -179,5 +216,5 @@ jobs:
           fail_on_unmatched_files: true
           tag_name: v${{ needs.verify.outputs.version }}
           target_commitish: ${{ github.sha }}
-          generate_release_notes: true
+          body_path: ${{ runner.temp }}/notes.md
           prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
