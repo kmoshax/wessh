@@ -3417,7 +3417,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "wessh"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -3440,7 +3440,7 @@ dependencies = [
 
 [[package]]
 name = "wessh-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "clap",
  "dirs",
@@ -3452,7 +3452,7 @@ dependencies = [
 
 [[package]]
 name = "wessh-media"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "image",
  "nokhwa",

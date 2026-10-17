@@ -82,7 +82,7 @@ arm64, Windows x86-64 and macOS arm64 / x86-64 archives with `scripts/package.sh
 them with a `SHA256SUMS` file to a draft GitHub release, and leaves it for review. Bump
 `version` in the root `Cargo.toml` first.
 
-`sources::ORT_VERSION` in `crates/wessh-app/src/commands/setup/sources.rs` pins the ONNX Runtime
+`sources::ORT_VERSION` in `crates/wessh-app/src/install/sources.rs` pins the ONNX Runtime
 release `wessh setup` installs; update it together with the `ort` crate.
 
 ## Releasing
