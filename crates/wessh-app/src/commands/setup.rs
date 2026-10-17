@@ -15,6 +15,10 @@ use std::io::Write as _;
 use wessh_core::assets::{self, data_dir};
 
 pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if args.virtual_camera {
+        return virtual_camera(args.dry_run);
+    }
     let host = Host::detect(args.flavour)?;
     let request = Request {
         ort_version: args.ort_version.clone(),
@@ -45,6 +49,33 @@ pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
         println!("\nready. `wessh doctor` checks the installation; `wessh` opens the app");
         if wessh_media::windows_camera::status() == wessh_media::WindowsCameraStatus::NotInstalled {
             println!("optional: `wessh camera install` lets other apps use wessh as a webcam (asks for administrator rights once)");
+        }
+    }
+    Ok(())
+}
+
+/// Camera-only setup never downloads a runtime or models.
+#[cfg(target_os = "linux")]
+fn virtual_camera(dry_run: bool) -> Result<()> {
+    use wessh_media::loopback::{self, EnableOutcome, EnablePrompt};
+    if dry_run {
+        println!("would enable v4l2loopback now and after reboot (one administrator prompt); nothing was changed");
+        return Ok(());
+    }
+    let has_display = ["DISPLAY", "WAYLAND_DISPLAY"].iter().any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()));
+    let prompt = if has_display { EnablePrompt::Graphical } else { EnablePrompt::Terminal };
+    match loopback::enable(prompt) {
+        Ok(EnableOutcome::Enabled) => println!("Virtual camera enabled at {}, including after reboot", loopback::DEFAULT_LOOPBACK),
+        Ok(EnableOutcome::Cancelled) => println!("Cancelled"),
+        Err(error) => {
+            if matches!(error, loopback::EnableError::ModuleNotInstalled) {
+                let hint = loopback::install_hint();
+                eprintln!("{}", hint.note);
+                if let Some(command) = hint.command {
+                    eprintln!("{command}");
+                }
+            }
+            return Err(anyhow::Error::new(error).context("virtual camera setup failed"));
         }
     }
     Ok(())

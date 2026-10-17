@@ -7,9 +7,7 @@ use crate::ui::icons;
 use crate::ui::theme::{self, TypeRole, motion, shape, size, spacing};
 use eframe::egui::{self, Align2, CursorIcon, Key, Label, Margin, Sense, Stroke, StrokeKind, TextureHandle, Ui, Vec2, pos2, vec2};
 use std::path::PathBuf;
-use wessh_media::{
-    DEFAULT_LOOPBACK, DEFAULT_STREAM, LOOPBACK_MODPROBE, LoopbackStatus, OutputTarget, VideoDevice, WINDOWS_CAMERA, WindowsCameraStatus,
-};
+use wessh_media::{DEFAULT_LOOPBACK, DEFAULT_STREAM, LoopbackStatus, OutputTarget, VideoDevice, WINDOWS_CAMERA, WindowsCameraStatus};
 
 // ── Source face ────────────────────────────────────────────────────────────────
 
@@ -234,8 +232,9 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
     let streaming = live && frame.snapshot.output_active;
     let loopback = frame.devices.map_or(LoopbackStatus::Unsupported, |d| d.loopback);
     let mut options = frame.devices.map(|d| device_options(&d.outputs, true)).unwrap_or_default();
-    if loopback == LoopbackStatus::NotLoaded {
-        // The device the modprobe command below creates.
+    let needs_loopback = matches!(loopback, LoopbackStatus::NotLoaded | LoopbackStatus::NotInstalled);
+    if needs_loopback {
+        // The device created by virtual camera setup.
         options.push((DEFAULT_LOOPBACK.to_owned(), format!("{DEFAULT_LOOPBACK} · needs v4l2loopback")));
     }
     let windows_camera = frame.devices.map_or(WindowsCameraStatus::Unsupported, |d| d.windows_camera);
@@ -245,8 +244,11 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
     options.push((DEFAULT_STREAM.to_owned(), STREAM_LABEL.to_owned()));
     let scanning = frame.scanning;
     let installing = frame.camera_installing;
+    let enabling = frame.loopback_enabling;
+    let notice = frame.loopback_notice;
+    let hint = frame.devices.and_then(|devices| devices.loopback_install_hint);
     let form = &mut *frame.form;
-    let (mut copied, mut refresh, mut install) = (false, false, false);
+    let (mut copied, mut refresh, mut install, mut enable) = (false, false, false, false);
     section_with(
         ui,
         icons::CAST,
@@ -272,8 +274,12 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
                 });
             });
             let wants_loopback = matches!(OutputTarget::parse(form.output_target.trim()), OutputTarget::V4l2(_));
-            if loopback == LoopbackStatus::NotLoaded && wants_loopback {
-                copied = loopback_help(ui);
+            if wants_loopback {
+                if needs_loopback || enabling {
+                    (copied, enable) = loopback_help(ui, loopback, hint, enabling, notice);
+                } else if let Some(notice) = notice {
+                    caption(ui, notice);
+                }
             }
             let target = OutputTarget::parse(form.output_target.trim());
             if target == OutputTarget::WindowsCamera
@@ -293,7 +299,7 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
         },
     );
     if copied {
-        frame.actions.push(Action::Notify("Command copied — run it in a terminal, then refresh".into()));
+        frame.actions.push(Action::Notify("Command copied — run it in a terminal, then enable the camera".into()));
     }
     if refresh {
         frame.actions.push(Action::RefreshDevices);
@@ -301,6 +307,12 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
     if install {
         frame.actions.push(Action::InstallWindowsCamera);
     }
+    #[cfg(target_os = "linux")]
+    if enable {
+        frame.actions.push(Action::EnableLoopback);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = enable;
 }
 
 /// Dropdown label of the Windows 11 virtual camera.
@@ -340,44 +352,68 @@ fn windows_camera_help(ui: &mut Ui, status: WindowsCameraStatus, installing: boo
 /// Dropdown label of the default network stream.
 const STREAM_LABEL: &str = "OBS media source (UDP stream)";
 
-/// Explains how to load v4l2loopback, with the command and a copy button. Returns whether it was copied.
-fn loopback_help(ui: &mut Ui) -> bool {
+/// Offers driver installation and one-prompt setup. Returns (command copied, enable clicked).
+fn loopback_help(
+    ui: &mut Ui,
+    status: LoopbackStatus,
+    hint: Option<wessh_media::loopback::InstallHint>,
+    enabling: bool,
+    notice: Option<&str>,
+) -> (bool, bool) {
     let colors = theme::colors(ui.ctx());
-    let mut copied = false;
-    egui::Frame::new().fill(colors.tertiary_container).corner_radius(shape::MEDIUM).inner_margin(Margin::same(spacing::MD as i8)).show(
+    let (mut copied, mut enable) = (false, false);
+    egui::Frame::new().fill(colors.surface_container).corner_radius(shape::MEDIUM).inner_margin(Margin::same(spacing::MD as i8)).show(
         ui,
         |ui| {
             ui.set_width(ui.available_width());
+            ui.label(TypeRole::TitleSmall.rich("Set up your virtual camera", colors.on_surface));
+            ui.add_space(spacing::XS);
+            if status == LoopbackStatus::NotInstalled {
+                let hint = hint.unwrap_or_else(|| wessh_media::loopback::parse_os_release(""));
+                ui.add(Label::new(TypeRole::BodyMedium.rich("v4l2loopback isn't installed for this kernel.", colors.on_surface)).wrap());
+                caption(ui, hint.note);
+                if let Some(command) = hint.command {
+                    copied = loopback_install_command(ui, command);
+                }
+            }
+            let text = "Enable the camera so other apps can see wessh as a webcam. One password prompt sets it up now and after reboot.";
+            ui.add(Label::new(TypeRole::BodyMedium.rich(text, colors.on_surface_variant)).wrap());
+            ui.add_space(spacing::SM);
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = spacing::SM;
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(size::ICON), Sense::hover());
-                paint::icon(ui.painter(), rect.center(), icons::WARNING, size::ICON, colors.on_tertiary_container, false);
-                ui.label(TypeRole::TitleSmall.rich("v4l2loopback isn't loaded", colors.on_tertiary_container));
+                enable = ui.add_enabled(!enabling, Button::filled("Enable virtual camera").icon(icons::VERIFIED_USER)).clicked();
+                if enabling {
+                    ui.add(CircularProgress::new(size::ICON_SMALL));
+                }
             });
+            if let Some(notice) = notice {
+                caption(ui, notice);
+            }
             ui.add_space(spacing::XS);
-            let text = "Other apps can only see wessh as a webcam once the virtual camera driver is loaded. Run:";
-            ui.add(Label::new(TypeRole::BodyMedium.rich(text, colors.on_tertiary_container)).wrap());
-            ui.add_space(spacing::XS);
-            egui::Frame::new()
-                .fill(colors.surface_container_lowest)
-                .corner_radius(shape::SMALL)
-                .inner_margin(Margin::same(spacing::SM as i8))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                        let text_width = ui.available_width() - size::TARGET;
-                        ui.allocate_ui(vec2(text_width, 0.0), |ui| {
-                            ui.add(Label::new(TypeRole::BodySmall.rich(LOOPBACK_MODPROBE, colors.on_surface).monospace()).wrap());
-                        });
-                        if ui.add(IconButton::new(icons::CONTENT_COPY, "Copy command")).clicked() {
-                            ui.ctx().copy_text(LOOPBACK_MODPROBE.to_owned());
-                            copied = true;
-                        }
-                    });
-                });
-            ui.add_space(spacing::XS);
-            ui.label(TypeRole::BodySmall.rich("Or pick the OBS media source target instead.", colors.on_tertiary_container));
+            caption(ui, "Or pick the OBS media source target instead.");
         },
     );
+    (copied, enable)
+}
+
+fn loopback_install_command(ui: &mut Ui, command: &str) -> bool {
+    let colors = theme::colors(ui.ctx());
+    let mut copied = false;
+    egui::Frame::new()
+        .fill(colors.surface_container_lowest)
+        .corner_radius(shape::SMALL)
+        .inner_margin(Margin::same(spacing::SM as i8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+                let text_width = ui.available_width() - size::TARGET;
+                ui.allocate_ui(vec2(text_width, 0.0), |ui| {
+                    ui.add(Label::new(TypeRole::BodySmall.rich(command, colors.on_surface).monospace()).wrap());
+                });
+                if ui.add(IconButton::new(icons::CONTENT_COPY, "Copy command")).clicked() {
+                    ui.ctx().copy_text(command.to_owned());
+                    copied = true;
+                }
+            });
+        });
     copied
 }

@@ -36,7 +36,7 @@ mod unsupported;
 
 #[cfg(windows)]
 pub use client::{install, is_elevated, run_elevated, status, uninstall};
-pub use loopback::{DEFAULT_LOOPBACK, LOOPBACK_MODPROBE, LoopbackStatus};
+pub use loopback::{DEFAULT_LOOPBACK, LoopbackStatus};
 #[cfg(not(windows))]
 pub use unsupported::{install, is_elevated, run_elevated, status, uninstall};
 

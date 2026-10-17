@@ -73,6 +73,9 @@ pub enum Action {
     RefreshDevices,
     /// Install or update the Windows virtual camera (asks for administrator rights).
     InstallWindowsCamera,
+    /// Enable the Linux virtual camera with one administrator prompt.
+    #[cfg(target_os = "linux")]
+    EnableLoopback,
     /// Show a snackbar message.
     Notify(String),
 }
@@ -95,6 +98,10 @@ pub struct Frame<'a> {
     pub scanning: bool,
     /// The Windows virtual camera is being installed.
     pub camera_installing: bool,
+    /// The Linux virtual camera is being enabled (an administrator prompt is open).
+    pub loopback_enabling: bool,
+    /// How enabling it last ended (enabled, cancelled, or the error).
+    pub loopback_notice: Option<&'a str>,
     /// Drawn for the Image or Video screen: hide live-only options.
     pub offline: bool,
     pub actions: Vec<Action>,
@@ -135,6 +142,9 @@ pub struct LiveScreen {
     network_scan: Task<Vec<VideoDevice>>,
     /// Installing the Windows virtual camera; the error message if it failed.
     camera_install: Task<Result<(), String>>,
+    /// Enabling the Linux virtual camera, and how it last ended.
+    loopback_enable: Task<anyhow::Result<wessh_media::loopback::EnableOutcome>>,
+    loopback_notice: Option<String>,
     /// See [`LiveScreen::pretend_loopback_missing`].
     loopback_missing: bool,
     /// Modal side sheet open (compact layouts only).
@@ -174,6 +184,18 @@ impl LiveScreen {
             let message = installed.map_or_else(|e| format!("Camera not installed: {e}"), |()| "The wessh camera is installed".to_owned());
             self.notify(ctx, message);
             self.scan.spawn(ctx, list_devices);
+        }
+        if let Some(result) = self.loopback_enable.poll() {
+            match result {
+                Ok(wessh_media::loopback::EnableOutcome::Enabled) => {
+                    self.loopback_notice = Some("Virtual camera enabled, including after reboot".to_owned());
+                    // Discard an older scan so the refresh always observes the newly loaded module.
+                    self.scan = Task::default();
+                    self.run(ctx, session, snapshot, Action::RefreshDevices);
+                }
+                Ok(wessh_media::loopback::EnableOutcome::Cancelled) => self.loopback_notice = Some("Cancelled".to_owned()),
+                Err(error) => self.loopback_notice = Some(format!("{error:#}")),
+            }
         }
         if let Some(mut devices) = self.scan.poll() {
             if self.loopback_missing {
@@ -251,6 +273,8 @@ impl LiveScreen {
             network_cameras: &self.network_cameras,
             scanning: self.scan.is_running() || self.network_scan.is_running(),
             camera_installing: self.camera_install.is_running(),
+            loopback_enabling: self.loopback_enable.is_running(),
+            loopback_notice: self.loopback_notice.as_deref(),
             offline,
             actions: Vec::new(),
         };
@@ -314,6 +338,14 @@ impl LiveScreen {
             Action::InstallWindowsCamera => {
                 if !self.camera_install.is_running() {
                     self.camera_install.spawn(ctx, || crate::commands::camera::install().map_err(|e| format!("{e:#}")));
+                }
+            }
+            #[cfg(target_os = "linux")]
+            Action::EnableLoopback => {
+                if !self.loopback_enable.is_running() {
+                    self.loopback_notice = None;
+                    self.loopback_enable
+                        .spawn(ctx, || wessh_media::loopback::enable(wessh_media::loopback::EnablePrompt::Graphical).map_err(Into::into));
                 }
             }
             Action::Notify(message) => self.notify(ctx, message),

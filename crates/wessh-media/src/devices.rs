@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-pub use wessh_vcam::{LOOPBACK_MODPROBE, LoopbackStatus};
+pub use wessh_vcam::LoopbackStatus;
 
 const SYSFS_VIDEO: &str = "/sys/class/video4linux";
 const SYSFS_LOOPBACK_MODULE: &str = "/sys/module/v4l2loopback";
@@ -35,6 +35,8 @@ pub struct Devices {
     /// v4l2loopback devices (Linux only).
     pub outputs: Vec<VideoDevice>,
     pub loopback: LoopbackStatus,
+    /// How to install v4l2loopback on this distribution, when it isn't installed.
+    pub loopback_install_hint: Option<wessh_vcam::loopback::InstallHint>,
     /// Whether the built-in Windows 11 virtual camera can be used (`Unsupported` elsewhere).
     pub windows_camera: crate::WindowsCameraStatus,
 }
@@ -46,7 +48,13 @@ pub fn list_devices() -> Devices {
         "linux" => {
             let nodes = read_sysfs(Path::new(SYSFS_VIDEO));
             let loaded = Path::new(SYSFS_LOOPBACK_MODULE).exists();
-            classify_v4l2(&nodes, loaded)
+            let mut devices = classify_v4l2(&nodes, loaded);
+            #[cfg(target_os = "linux")]
+            if devices.loopback == LoopbackStatus::NotLoaded && !wessh_vcam::loopback::is_installed() {
+                devices.loopback = LoopbackStatus::NotInstalled;
+                devices.loopback_install_hint = Some(wessh_vcam::loopback::install_hint());
+            }
+            devices
         }
         _ => Devices {
             cameras: crate::camera::native_cameras().into_iter().map(|(index, name)| VideoDevice { id: index.to_string(), name }).collect(),

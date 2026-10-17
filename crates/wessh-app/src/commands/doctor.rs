@@ -15,7 +15,7 @@ use wessh_core::runtime::locate;
 use wessh_core::{Device, Engine, Frame};
 use wessh_media::WindowsCameraStatus;
 
-use wessh_media::LOOPBACK_MODPROBE as V4L2LOOPBACK_LOAD;
+use wessh_media::loopback;
 
 /// Findings that need action.
 #[derive(Default)]
@@ -234,12 +234,16 @@ fn check_windows_camera(report: &mut Report) {
 fn check_v4l2loopback(report: &mut Report) {
     if !Path::new("/sys/module/v4l2loopback").exists() {
         row("virtual camera", "v4l2loopback not loaded");
-        let installed = platform::run_stdout("modinfo", &["v4l2loopback"]).is_some();
-        report.suggestions.push(if installed {
-            format!("for virtual camera output, load v4l2loopback: {V4L2LOOPBACK_LOAD}")
-        } else {
-            format!("for virtual camera output, install v4l2loopback (package v4l2loopback-dkms or similar), then: {V4L2LOOPBACK_LOAD}")
-        });
+        #[cfg(target_os = "linux")]
+        if !loopback::is_installed() {
+            let hint = loopback::install_hint();
+            report.suggestions.push(hint.command.map_or_else(|| hint.note.to_owned(), |command| format!("{} Run: {command}", hint.note)));
+        }
+        report.suggestions.push(
+            "enable virtual camera output from Live → Output → Enable virtual camera, or run `wessh setup --virtual-camera` \
+             (one administrator prompt; also enables it after reboot)"
+                .to_owned(),
+        );
         return;
     }
     let devices: Vec<String> = std::fs::read_dir("/sys/devices/virtual/video4linux")
@@ -255,7 +259,11 @@ fn check_v4l2loopback(report: &mut Report) {
         .unwrap_or_default();
     if devices.is_empty() {
         row("virtual camera", "v4l2loopback loaded but has no devices");
-        report.suggestions.push(format!("reload v4l2loopback with a device: sudo modprobe -r v4l2loopback && {V4L2LOOPBACK_LOAD}"));
+        report.suggestions.push(format!(
+            "reload v4l2loopback with a device: sudo modprobe -r v4l2loopback && {}; \
+             then `wessh setup --virtual-camera` makes it persistent",
+            loopback::loopback_modprobe()
+        ));
     } else {
         row("virtual camera", devices.join(", "));
     }

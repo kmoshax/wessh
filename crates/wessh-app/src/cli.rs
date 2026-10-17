@@ -154,7 +154,7 @@ pub enum Command {
     },
     /// Download models for the enabled features (what the app's onboarding installs).
     Models,
-    /// Install the ONNX Runtime build for this GPU, its GPU libraries and the models.
+    /// Install the runtime and models, or enable the Linux virtual camera with --virtual-camera.
     Setup(SetupArgs),
     /// Check the installation and explain how to fix what is missing.
     Doctor,
@@ -178,6 +178,10 @@ pub enum CameraAction {
 
 #[derive(Debug, Clone, Args)]
 pub struct SetupArgs {
+    /// Only enable the Linux virtual camera, now and after reboot (asks for administrator rights).
+    #[cfg(target_os = "linux")]
+    #[arg(long, conflicts_with_all = ["flavour", "ort_version", "force", "no_models"])]
+    pub virtual_camera: bool,
     /// Show what would be downloaded, with sizes, without changing anything.
     #[arg(long)]
     pub dry_run: bool,
@@ -214,5 +218,20 @@ pub struct CameraArgs {
 impl CameraArgs {
     pub fn config(&self) -> CameraConfig {
         CameraConfig { device: self.camera.clone(), width: self.width, height: self.height, fps: self.fps }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn virtual_camera_setup_accepts_dry_run_without_runtime_options() {
+        let cli = Cli::try_parse_from(["wessh", "setup", "--virtual-camera", "--dry-run"]).unwrap();
+        let Some(Command::Setup(args)) = cli.command else { panic!("expected setup") };
+        assert!(args.virtual_camera);
+        assert!(args.dry_run);
+        crate::commands::run(Command::Setup(args), &cli.options).unwrap();
+        assert!(Cli::try_parse_from(["wessh", "setup", "--virtual-camera", "--flavour", "cpu"]).is_err());
     }
 }

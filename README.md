@@ -171,12 +171,17 @@ executable (also `./ort/lib` and `./lib`), then `<data dir>/ort/lib`.
 
 ### Virtual camera on Linux
 
+Click **Enable virtual camera** in Live → Output, or run:
+
 ```sh
-sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="wessh" exclusive_caps=1
+wessh setup --virtual-camera
 wessh cam -s me.jpg --out /dev/video10
 ```
 
-`wessh doctor` tells you whether the module is installed and loaded.
+One administrator prompt enables v4l2loopback now and after reboot. The app uses polkit;
+the CLI uses sudo when no display is available. If the driver is missing, the Output section
+and `wessh doctor` show installation guidance for your distribution (Fedora requires RPM Fusion).
+`wessh setup --virtual-camera --dry-run` previews the action without changing anything.
 
 ### Virtual camera on Windows 11
 

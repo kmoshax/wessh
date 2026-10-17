@@ -13,7 +13,7 @@ mod sink;
 mod video;
 
 pub use camera::{Camera, CameraConfig, default_camera_device, is_network_source, restore_camera_settings};
-pub use devices::{Devices, LOOPBACK_MODPROBE, LoopbackStatus, VideoDevice, list_devices};
+pub use devices::{Devices, LoopbackStatus, VideoDevice, list_devices};
 pub use error::{Error, Result};
 pub use ffmpeg::{bundled_ffmpeg, find_ffmpeg, system_ffmpeg};
 pub use latest::LatestFrame;
@@ -23,3 +23,6 @@ pub use video::{Encoder, VideoInfo, VideoReader, probe};
 /// The Windows 11 virtual camera's status and its install helpers (they report "unsupported"
 /// off Windows).
 pub use wessh_vcam::{self as windows_camera, Status as WindowsCameraStatus};
+
+/// Linux virtual camera setup and package guidance.
+pub use wessh_vcam::loopback;
