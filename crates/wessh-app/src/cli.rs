@@ -130,7 +130,8 @@ pub enum Command {
         source: Vec<PathBuf>,
         #[command(flatten)]
         camera: CameraArgs,
-        /// /dev/videoN (v4l2loopback) or <udp://127.0.0.1:27000> (OBS media source).
+        /// /dev/videoN (v4l2loopback), `windows-camera` (Windows 11) or <udp://127.0.0.1:27000>
+        /// (OBS media source).
         #[arg(long)]
         out: Option<String>,
     },
@@ -157,6 +158,22 @@ pub enum Command {
     Setup(SetupArgs),
     /// Check the installation and explain how to fix what is missing.
     Doctor,
+    /// The built-in virtual camera (Windows 11): other apps see wessh as a webcam.
+    #[cfg_attr(not(windows), command(hide = true))]
+    Camera {
+        #[command(subcommand)]
+        action: CameraAction,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Subcommand)]
+pub enum CameraAction {
+    /// Install or update it (asks for administrator rights once).
+    Install,
+    /// Remove it.
+    Uninstall,
+    /// Say whether it is installed (exit code 0 ready, 2 unsupported, 3 not installed, 4 outdated).
+    Status,
 }
 
 #[derive(Debug, Clone, Args)]

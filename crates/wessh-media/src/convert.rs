@@ -125,7 +125,7 @@ fn decode_jpeg(src: &[u8], width: usize, height: usize, out: &mut [u8]) -> Resul
 }
 
 /// Studio-swing BT.601 RGB → YUV in 8.8 fixed point.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", windows, test))]
 mod bt601_inverse {
     pub const Y: [i32; 3] = [66, 129, 25];
     pub const U: [i32; 3] = [-38, -74, 112];
@@ -150,6 +150,38 @@ pub fn bgr_to_yuyv(src: &[u8], width: usize, height: usize, out: &mut [u8]) {
             byte(dot(Y, second) + LUMA_OFFSET),
             byte(dot(V, mean) + CHROMA_OFFSET),
         ];
+    }
+}
+
+/// Convert BGR into NV12 (`width` and `height` even): full-resolution luma, then `U V` pairs
+/// averaged over each 2×2 block. `out` holds `width * height * 3 / 2` bytes.
+#[cfg(any(windows, test))]
+pub fn bgr_to_nv12(src: &[u8], width: usize, height: usize, out: &mut [u8]) {
+    use bt601::{CHROMA_OFFSET, LUMA_OFFSET, ROUND, SHIFT};
+    use bt601_inverse::{U, V, Y};
+    let dot = |m: [i32; 3], [b, g, r]: [i32; 3]| (m[0] * r + m[1] * g + m[2] * b + ROUND) >> SHIFT;
+    let byte = |value: i32| value.clamp(0, 255) as u8;
+    let luma_of = |pixel: [i32; 3]| byte(dot(Y, pixel) + LUMA_OFFSET);
+    let stride = width * Frame::CHANNELS;
+    let (luma, chroma) = out.split_at_mut((width * height).min(out.len()));
+    let row_pairs = src.chunks_exact(stride * 2).zip(luma.chunks_exact_mut(width * 2)).zip(chroma.chunks_exact_mut(width));
+    for ((rows, luma_rows), chroma_row) in row_pairs {
+        let (top, bottom) = rows.split_at(stride);
+        let (luma_top, luma_bottom) = luma_rows.split_at_mut(width);
+        let blocks = top
+            .as_chunks::<6>()
+            .0
+            .iter()
+            .zip(bottom.as_chunks::<6>().0)
+            .zip(luma_top.as_chunks_mut::<2>().0.iter_mut().zip(luma_bottom.as_chunks_mut::<2>().0));
+        for (((upper, lower), (luma_upper, luma_lower)), uv) in blocks.zip(chroma_row.as_chunks_mut::<2>().0) {
+            let pixel = |pair: &[u8; 6], i: usize| [pair[i * 3], pair[i * 3 + 1], pair[i * 3 + 2]].map(i32::from);
+            let block = [pixel(upper, 0), pixel(upper, 1), pixel(lower, 0), pixel(lower, 1)];
+            *luma_upper = [luma_of(block[0]), luma_of(block[1])];
+            *luma_lower = [luma_of(block[2]), luma_of(block[3])];
+            let mean = std::array::from_fn(|c| (block.iter().map(|p| p[c]).sum::<i32>() + 2) / 4);
+            *uv = [byte(dot(U, mean) + CHROMA_OFFSET), byte(dot(V, mean) + CHROMA_OFFSET)];
+        }
     }
 }
 
@@ -231,6 +263,23 @@ mod tests {
         let mut back = [0u8; 12];
         to_bgr(PixelFormat::Yuyv, &yuyv, 4, 1, &mut back).unwrap();
         for (a, b) in bgr[..6].iter().zip(&back[..6]) {
+            assert!((i32::from(*a) - i32::from(*b)).abs() <= 3, "{bgr:?} -> {back:?}");
+        }
+    }
+
+    #[test]
+    fn nv12_round_trips() {
+        // A 4×2 frame: two flat 2×2 blocks, a colour and white.
+        let colour = [30, 60, 200];
+        let mut bgr = Vec::new();
+        for _ in 0..2 {
+            bgr.extend(colour.iter().chain(&colour).chain(&[255; 6]));
+        }
+        let mut nv12 = [0u8; 12];
+        bgr_to_nv12(&bgr, 4, 2, &mut nv12);
+        let mut back = [0u8; 24];
+        to_bgr(PixelFormat::Nv12, &nv12, 4, 2, &mut back).unwrap();
+        for (a, b) in bgr.iter().zip(&back) {
             assert!((i32::from(*a) - i32::from(*b)).abs() <= 3, "{bgr:?} -> {back:?}");
         }
     }

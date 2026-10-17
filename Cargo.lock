@@ -3460,6 +3460,16 @@ dependencies = [
  "thiserror 2.0.21",
  "v4l",
  "wessh-core",
+ "wessh-vcam-win",
+]
+
+[[package]]
+name = "wessh-vcam-win"
+version = "0.4.3"
+dependencies = [
+ "thiserror 2.0.21",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

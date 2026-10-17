@@ -71,6 +71,8 @@ pub enum Action {
     LoadSource(PathBuf),
     ToggleLive,
     RefreshDevices,
+    /// Install or update the Windows virtual camera (asks for administrator rights).
+    InstallWindowsCamera,
     /// Show a snackbar message.
     Notify(String),
 }
@@ -91,6 +93,8 @@ pub struct Frame<'a> {
     pub network_cameras: &'a [VideoDevice],
     /// A device scan is running.
     pub scanning: bool,
+    /// The Windows virtual camera is being installed.
+    pub camera_installing: bool,
     /// Drawn for the Image or Video screen: hide live-only options.
     pub offline: bool,
     pub actions: Vec<Action>,
@@ -129,6 +133,8 @@ pub struct LiveScreen {
     /// Network cameras, scanned beside the local devices (it takes a second or two).
     network_cameras: Vec<VideoDevice>,
     network_scan: Task<Vec<VideoDevice>>,
+    /// Installing the Windows virtual camera; the error message if it failed.
+    camera_install: Task<Result<(), String>>,
     /// See [`LiveScreen::pretend_loopback_missing`].
     loopback_missing: bool,
     /// Modal side sheet open (compact layouts only).
@@ -163,6 +169,11 @@ impl LiveScreen {
         }
         if let Some(cameras) = self.network_scan.poll() {
             self.network_cameras = cameras;
+        }
+        if let Some(installed) = self.camera_install.poll() {
+            let message = installed.map_or_else(|e| format!("Camera not installed: {e}"), |()| "The wessh camera is installed".to_owned());
+            self.notify(ctx, message);
+            self.scan.spawn(ctx, list_devices);
         }
         if let Some(mut devices) = self.scan.poll() {
             if self.loopback_missing {
@@ -239,6 +250,7 @@ impl LiveScreen {
             devices: self.devices.as_ref(),
             network_cameras: &self.network_cameras,
             scanning: self.scan.is_running() || self.network_scan.is_running(),
+            camera_installing: self.camera_install.is_running(),
             offline,
             actions: Vec::new(),
         };
@@ -297,6 +309,11 @@ impl LiveScreen {
                 }
                 if !self.network_scan.is_running() {
                     self.network_scan.spawn(ctx, find_network_cameras);
+                }
+            }
+            Action::InstallWindowsCamera => {
+                if !self.camera_install.is_running() {
+                    self.camera_install.spawn(ctx, || crate::commands::camera::install().map_err(|e| format!("{e:#}")));
                 }
             }
             Action::Notify(message) => self.notify(ctx, message),

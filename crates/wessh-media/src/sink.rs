@@ -8,6 +8,8 @@ use wessh_core::Frame;
 pub const DEFAULT_LOOPBACK: &str = "/dev/video10";
 /// A local UDP MPEG-TS stream that OBS can add as a media source.
 pub const DEFAULT_STREAM: &str = "udp://127.0.0.1:27000";
+/// The target string of the built-in Windows 11 virtual camera.
+pub const WINDOWS_CAMERA: &str = "windows-camera";
 
 /// Where live output goes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -16,6 +18,8 @@ pub enum OutputTarget {
     V4l2(String),
     /// A network stream (`udp://`, `tcp://`, `srt://`) that OBS can add as a media source.
     Stream(String),
+    /// The built-in virtual camera (Windows 11, `wessh-vcam-win`).
+    WindowsCamera,
 }
 
 impl OutputTarget {
@@ -28,22 +32,33 @@ impl OutputTarget {
     /// Classify a user-supplied target string.
     #[must_use]
     pub fn parse(target: &str) -> Self {
-        if ["udp://", "tcp://", "srt://"].iter().any(|p| target.starts_with(p)) {
+        if target == WINDOWS_CAMERA {
+            Self::WindowsCamera
+        } else if ["udp://", "tcp://", "srt://"].iter().any(|p| target.starts_with(p)) {
             Self::Stream(target.to_owned())
         } else {
             Self::V4l2(target.to_owned())
         }
     }
 
+    /// v4l2loopback on Linux, the built-in camera on Windows 11 (installed or not: the app offers
+    /// to install it), an OBS stream elsewhere.
     #[must_use]
     pub fn default_for_platform() -> Self {
-        if cfg!(target_os = "linux") { Self::V4l2(DEFAULT_LOOPBACK.into()) } else { Self::Stream(DEFAULT_STREAM.into()) }
+        if cfg!(target_os = "linux") {
+            Self::V4l2(DEFAULT_LOOPBACK.into())
+        } else if wessh_vcam_win::status() != crate::WindowsCameraStatus::Unsupported {
+            Self::WindowsCamera
+        } else {
+            Self::Stream(DEFAULT_STREAM.into())
+        }
     }
 
     #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Self::V4l2(s) | Self::Stream(s) => s,
+            Self::WindowsCamera => WINDOWS_CAMERA,
         }
     }
 }
@@ -55,6 +70,9 @@ enum Backend {
     /// A v4l2loopback device written directly as YUYV, so live mode needs no ffmpeg.
     #[cfg(target_os = "linux")]
     Loopback { device: v4l::Device, yuyv: Vec<u8> },
+    /// The Windows 11 virtual camera; frames are converted straight into its shared memory.
+    #[cfg(windows)]
+    WindowsCamera(wessh_vcam_win::VirtualCamera),
 }
 
 impl std::fmt::Debug for Backend {
@@ -63,6 +81,8 @@ impl std::fmt::Debug for Backend {
             Self::Ffmpeg { process, .. } => f.debug_struct("Ffmpeg").field("pid", &process.id()).finish(),
             #[cfg(target_os = "linux")]
             Self::Loopback { .. } => f.write_str("Loopback"),
+            #[cfg(windows)]
+            Self::WindowsCamera(camera) => camera.fmt(f),
         }
     }
 }
@@ -88,6 +108,13 @@ impl FrameSink {
             OutputTarget::V4l2(path) => Self::loopback(path, width, height),
             #[cfg(not(target_os = "linux"))]
             OutputTarget::V4l2(_) => Err(Error::Unsupported("v4l2 output is Linux-only; use a udp:// target with OBS")),
+            #[cfg(windows)]
+            OutputTarget::WindowsCamera => {
+                let camera = wessh_vcam_win::VirtualCamera::start(width as u32, height as u32, fps)?;
+                Ok(Self { backend: Backend::WindowsCamera(camera), size: (width, height) })
+            }
+            #[cfg(not(windows))]
+            OutputTarget::WindowsCamera => Err(Error::Unsupported("the built-in virtual camera is Windows-only")),
         }
     }
 
@@ -122,6 +149,11 @@ impl FrameSink {
                 crate::convert::bgr_to_yuyv(&frame.data, frame.width, frame.height, yuyv);
                 device.write_all(yuyv)?;
             }
+            #[cfg(windows)]
+            Backend::WindowsCamera(camera) => {
+                crate::convert::bgr_to_nv12(&frame.data, frame.width, frame.height, camera.frame());
+                camera.publish();
+            }
         }
         Ok(())
     }
@@ -136,6 +168,8 @@ impl FrameSink {
             }
             #[cfg(target_os = "linux")]
             Backend::Loopback { .. } => Ok(()),
+            #[cfg(windows)]
+            Backend::WindowsCamera(_) => Ok(()),
         }
     }
 }
@@ -151,6 +185,8 @@ impl Drop for FrameSink {
             }
             #[cfg(target_os = "linux")]
             Backend::Loopback { .. } => {}
+            #[cfg(windows)]
+            Backend::WindowsCamera(_) => {}
         }
     }
 }
@@ -163,5 +199,7 @@ mod tests {
     fn parses_targets() {
         assert_eq!(OutputTarget::parse("udp://127.0.0.1:1"), OutputTarget::Stream("udp://127.0.0.1:1".into()));
         assert_eq!(OutputTarget::parse("/dev/video10"), OutputTarget::V4l2("/dev/video10".into()));
+        assert_eq!(OutputTarget::parse(super::WINDOWS_CAMERA), OutputTarget::WindowsCamera);
+        assert_eq!(OutputTarget::WindowsCamera.as_str(), super::WINDOWS_CAMERA);
     }
 }

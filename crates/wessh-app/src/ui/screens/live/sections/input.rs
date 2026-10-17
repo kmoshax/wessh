@@ -7,7 +7,9 @@ use crate::ui::icons;
 use crate::ui::theme::{self, TypeRole, motion, shape, size, spacing};
 use eframe::egui::{self, Align2, CursorIcon, Key, Label, Margin, Sense, Stroke, StrokeKind, TextureHandle, Ui, Vec2, pos2, vec2};
 use std::path::PathBuf;
-use wessh_media::{DEFAULT_LOOPBACK, DEFAULT_STREAM, LOOPBACK_MODPROBE, LoopbackStatus, OutputTarget, VideoDevice};
+use wessh_media::{
+    DEFAULT_LOOPBACK, DEFAULT_STREAM, LOOPBACK_MODPROBE, LoopbackStatus, OutputTarget, VideoDevice, WINDOWS_CAMERA, WindowsCameraStatus,
+};
 
 // ── Source face ────────────────────────────────────────────────────────────────
 
@@ -236,10 +238,15 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
         // The device the modprobe command below creates.
         options.push((DEFAULT_LOOPBACK.to_owned(), format!("{DEFAULT_LOOPBACK} · needs v4l2loopback")));
     }
+    let windows_camera = frame.devices.map_or(WindowsCameraStatus::Unsupported, |d| d.windows_camera);
+    if windows_camera != WindowsCameraStatus::Unsupported {
+        options.insert(0, (WINDOWS_CAMERA.to_owned(), WINDOWS_CAMERA_LABEL.to_owned()));
+    }
     options.push((DEFAULT_STREAM.to_owned(), STREAM_LABEL.to_owned()));
     let scanning = frame.scanning;
+    let installing = frame.camera_installing;
     let form = &mut *frame.form;
-    let (mut copied, mut refresh) = (false, false);
+    let (mut copied, mut refresh, mut install) = (false, false, false);
     section_with(
         ui,
         icons::CAST,
@@ -248,7 +255,7 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
         |ui| {
             ui.add_enabled_ui(!live, |ui| {
                 let kind = match OutputTarget::parse(form.output_target.trim()) {
-                    OutputTarget::V4l2(_) => "Appear as a webcam in other apps",
+                    OutputTarget::V4l2(_) | OutputTarget::WindowsCamera => "Appear as a webcam in other apps",
                     OutputTarget::Stream(_) => "Stream to OBS as a media source",
                 };
                 switch_row(ui, icons::SENSORS, "Virtual camera", kind, &mut form.output_enabled);
@@ -260,13 +267,25 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
                         &options,
                         &mut form.output_target,
                         &mut form.output_custom,
-                        "/dev/video10 or udp://…",
+                        if cfg!(windows) { "windows-camera or udp://…" } else { "/dev/video10 or udp://…" },
                     );
                 });
             });
             let wants_loopback = matches!(OutputTarget::parse(form.output_target.trim()), OutputTarget::V4l2(_));
             if loopback == LoopbackStatus::NotLoaded && wants_loopback {
                 copied = loopback_help(ui);
+            }
+            let target = OutputTarget::parse(form.output_target.trim());
+            if target == OutputTarget::WindowsCamera
+                && matches!(windows_camera, WindowsCameraStatus::NotInstalled | WindowsCameraStatus::Outdated)
+            {
+                install = windows_camera_help(ui, windows_camera, installing);
+            }
+            if cfg!(windows) && windows_camera == WindowsCameraStatus::Unsupported && matches!(target, OutputTarget::Stream(_)) {
+                caption(
+                    ui,
+                    "Windows 10 has no virtual camera API: add this stream to OBS as a media source and start OBS's virtual camera.",
+                );
             }
             if streaming {
                 ui.add(Chip::status("Sending frames", true).icon(icons::GRAPHIC_EQ));
@@ -279,6 +298,43 @@ pub(super) fn output(ui: &mut Ui, frame: &mut Frame<'_>) {
     if refresh {
         frame.actions.push(Action::RefreshDevices);
     }
+    if install {
+        frame.actions.push(Action::InstallWindowsCamera);
+    }
+}
+
+/// Dropdown label of the Windows 11 virtual camera.
+const WINDOWS_CAMERA_LABEL: &str = "wessh camera (Windows 11)";
+
+/// Offers to install (or update) the Windows virtual camera. Returns whether Install was clicked.
+fn windows_camera_help(ui: &mut Ui, status: WindowsCameraStatus, installing: bool) -> bool {
+    let colors = theme::colors(ui.ctx());
+    let (title, button) = match status {
+        WindowsCameraStatus::Outdated => ("The wessh camera needs an update", "Update camera"),
+        _ => ("The wessh camera isn't installed", "Install camera"),
+    };
+    let mut clicked = false;
+    egui::Frame::new().fill(colors.tertiary_container).corner_radius(shape::MEDIUM).inner_margin(Margin::same(spacing::MD as i8)).show(
+        ui,
+        |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = spacing::SM;
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(size::ICON), Sense::hover());
+                paint::icon(ui.painter(), rect.center(), icons::INFO, size::ICON, colors.on_tertiary_container, false);
+                ui.label(TypeRole::TitleSmall.rich(title, colors.on_tertiary_container));
+            });
+            ui.add_space(spacing::XS);
+            let text = "Other apps see wessh as a webcam once its camera is installed. Windows asks for administrator permission once.";
+            ui.add(Label::new(TypeRole::BodyMedium.rich(text, colors.on_tertiary_container)).wrap());
+            ui.add_space(spacing::SM);
+            let label = if installing { "Installing…" } else { button };
+            clicked = ui.add_enabled(!installing, Button::filled(label).icon(icons::VERIFIED_USER)).clicked();
+            ui.add_space(spacing::XS);
+            ui.label(TypeRole::BodySmall.rich("Or pick the OBS media source target instead.", colors.on_tertiary_container));
+        },
+    );
+    clicked
 }
 
 /// Dropdown label of the default network stream.

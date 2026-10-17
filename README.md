@@ -90,11 +90,13 @@ wessh                                              # desktop app
 wessh image -s me.jpg -t photo.jpg -o out.jpg      # swap faces in an image
 wessh video -s me.jpg -t clip.mp4 -o out.mp4
 wessh cam   -s me.jpg --out /dev/video10 --mirror  # headless live -> virtual camera
+wessh cam   -s me.jpg --out windows-camera        # headless live -> Windows 11 virtual camera
 wessh cam   -s me.jpg --out udp://127.0.0.1:27000  # headless live -> OBS media source
 wessh bench -s me.jpg -t photo.jpg -n 100          # per-stage latency
 wessh models                                       # download models for enabled features
 wessh setup                                        # install runtime, CUDA libraries and enabled models
 wessh doctor                                       # diagnose the installation
+wessh camera install                               # Windows 11: add the virtual camera (once)
 ```
 
 Global options:
@@ -176,6 +178,17 @@ wessh cam -s me.jpg --out /dev/video10
 
 `wessh doctor` tells you whether the module is installed and loaded.
 
+### Virtual camera on Windows 11
+
+Zoom, Teams, Discord, OBS and browsers list a camera called **wessh** while the live output is
+on. The installer offers to add it; otherwise click **Install camera** in the Output section or
+run `wessh camera install` once. Windows asks for administrator permission, because the camera
+service only loads drivers installed for all users (`%ProgramFiles%\wessh`); after that no
+rights are needed. `wessh camera uninstall` (or uninstalling wessh) removes it.
+
+Windows 10 has no virtual camera API: pick the OBS media source target, add
+`udp://127.0.0.1:27000` to OBS as a media source and start OBS's virtual camera.
+
 ## Platform notes
 
 <details>
@@ -210,7 +223,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 - Optical-flow tracking between detections
 - XSeg occlusion and BiSeNet region masks, mouth mask
 - CoreML execution provider on Apple Silicon
-- Native virtual camera on Windows 11 (`MFCreateVirtualCamera`) and macOS (Camera Extension)
+- Native virtual camera on macOS (Camera Extension)
 
 ## License
 

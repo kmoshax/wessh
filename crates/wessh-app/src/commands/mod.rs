@@ -2,6 +2,7 @@
 
 mod bench;
 mod cam;
+pub mod camera;
 mod doctor;
 mod image;
 mod models;
@@ -24,6 +25,7 @@ pub fn run(command: Command, options: &Options) -> Result<()> {
         Command::Models => models::run(options),
         Command::Setup(args) => setup::run(&args, options),
         Command::Doctor => doctor::run(options),
+        Command::Camera { action } => camera::run(action),
     }
 }
 

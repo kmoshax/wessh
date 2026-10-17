@@ -28,6 +28,8 @@ try {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     Copy-Item "$tmp\wessh.exe" $dir -Force
     Copy-Item "$tmp\wessh-cli.exe" $dir -Force
+    # The virtual camera's media source (Windows 11): `wessh camera install` puts it into place.
+    if (Test-Path "$tmp\wessh-vcam.dll") { Copy-Item "$tmp\wessh-vcam.dll" $dir -Force }
     Copy-Item "$tmp\README.md" $dir -Force
     Copy-Item "$tmp\LICENSE" $dir -Force
 } finally {

@@ -48,6 +48,8 @@ pub struct Devices {
     /// v4l2loopback devices (Linux only).
     pub outputs: Vec<VideoDevice>,
     pub loopback: LoopbackStatus,
+    /// Whether the built-in Windows 11 virtual camera can be used (`Unsupported` elsewhere).
+    pub windows_camera: crate::WindowsCameraStatus,
 }
 
 /// Scan for cameras and virtual-camera outputs. Blocking (asks the camera API on Windows and macOS).
@@ -61,6 +63,7 @@ pub fn list_devices() -> Devices {
         }
         _ => Devices {
             cameras: crate::camera::native_cameras().into_iter().map(|(index, name)| VideoDevice { id: index.to_string(), name }).collect(),
+            windows_camera: wessh_vcam_win::status(),
             ..Devices::default()
         },
     }
@@ -115,7 +118,7 @@ pub fn classify_v4l2(nodes: &[V4l2Node], loopback_loaded: bool) -> Devices {
     let cameras = hardware.into_iter().filter(|n| n.index.is_none_or(|i| i == PRIMARY_NODE_INDEX)).map(V4l2Node::device).collect();
     let outputs: Vec<VideoDevice> = outputs.into_iter().map(V4l2Node::device).collect();
     let loaded = loopback_loaded || !outputs.is_empty();
-    Devices { cameras, outputs, loopback: if loaded { LoopbackStatus::Loaded } else { LoopbackStatus::NotLoaded } }
+    Devices { cameras, outputs, loopback: if loaded { LoopbackStatus::Loaded } else { LoopbackStatus::NotLoaded }, ..Devices::default() }
 }
 
 fn read_sysfs(root: &Path) -> Vec<V4l2Node> {

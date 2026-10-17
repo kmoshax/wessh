@@ -5,7 +5,7 @@
 #
 # Every target gets a portable archive (what the one-line installers fetch):
 #   dist/wessh-<target>.tar.gz             Linux, macOS
-#   dist/wessh-<target>.zip                Windows (wessh.exe and wessh-cli.exe)
+#   dist/wessh-<target>.zip                Windows (wessh.exe, wessh-cli.exe, wessh-vcam.dll)
 # and the download people double-click:
 #   dist/wessh-linux-<arch>.AppImage       requires LINUXDEPLOY and APPIMAGETOOL
 #   dist/wessh-windows-x64-setup.exe       with ISCC set to Inno Setup's compiler
@@ -14,7 +14,9 @@
 # Names carry no version, so https://github.com/kmoshax/wessh/releases/latest/download/<name>
 # always points at the newest release. Build first with
 #   cargo build --release --target <rust-target> -p wessh
-# (on Windows also `--features console`, copied to wessh-cli.exe).
+# (on Windows also `--features console`, copied to wessh-cli.exe, and the virtual camera's
+# media source: `cargo rustc --release --target <rust-target> -p wessh-vcam-win --lib
+# --crate-type cdylib --features source`, copied to wessh-vcam.dll).
 set -euo pipefail
 
 target="${1:?usage: scripts/package.sh <rust-target> [version]}"
@@ -40,7 +42,7 @@ stage() { # <dir> <binaries...>: binaries, README and license in <dir>
 
 case "$target" in
 *windows*)
-    stage dist/stage wessh.exe wessh-cli.exe
+    stage dist/stage wessh.exe wessh-cli.exe wessh-vcam.dll
     rm -f "dist/wessh-$target.zip"
     (cd dist/stage && if command -v 7z >/dev/null; then 7z a -tzip -bso0 "../wessh-$target.zip" .; else zip -qr "../wessh-$target.zip" .; fi)
     echo "dist/wessh-$target.zip"

@@ -12,6 +12,9 @@ parking_lot.workspace = true
 thiserror.workspace = true
 nokhwa.workspace = true
 image.workspace = true
+# The Windows 11 virtual camera (status and install helpers compile everywhere and report
+# "unsupported" off Windows).
+wessh-vcam-win.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 v4l.workspace = true

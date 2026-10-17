@@ -1,4 +1,4 @@
-//! Video I/O: native webcam capture and v4l2loopback output (live mode needs no ffmpeg), and
+//! Video I/O: native webcam capture and virtual-camera output (v4l2loopback, Windows 11) (live mode needs no ffmpeg), and
 //! ffmpeg subprocesses for network streams and video files, which do all decoding and encoding
 //! (incl. NVENC / `VideoToolbox`); only raw BGR frames cross the pipes.
 
@@ -18,5 +18,8 @@ pub use error::{Error, Result};
 pub use ffmpeg::{bundled_ffmpeg, find_ffmpeg, system_ffmpeg};
 pub use latest::LatestFrame;
 pub use network::find_network_cameras;
-pub use sink::{DEFAULT_LOOPBACK, DEFAULT_STREAM, FrameSink, OutputTarget};
+pub use sink::{DEFAULT_LOOPBACK, DEFAULT_STREAM, FrameSink, OutputTarget, WINDOWS_CAMERA};
 pub use video::{Encoder, VideoInfo, VideoReader, probe};
+/// The Windows 11 virtual camera's status and its install helpers (they report "unsupported"
+/// off Windows).
+pub use wessh_vcam_win::{self as windows_camera, Status as WindowsCameraStatus};

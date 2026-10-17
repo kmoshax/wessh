@@ -43,6 +43,9 @@ pub fn run(args: &SetupArgs, options: &Options) -> Result<()> {
         println!("\ndry run: nothing was downloaded or changed");
     } else {
         println!("\nready. `wessh doctor` checks the installation; `wessh` opens the app");
+        if wessh_media::windows_camera::status() == wessh_media::WindowsCameraStatus::NotInstalled {
+            println!("optional: `wessh camera install` lets other apps use wessh as a webcam (asks for administrator rights once)");
+        }
     }
     Ok(())
 }

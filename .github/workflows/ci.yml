@@ -85,6 +85,13 @@ jobs:
           shared-key: checks
       - name: clippy
         run: cargo clippy --workspace --all-targets --profile ci --locked -- -D warnings
+      # The virtual camera's media source only builds into the DLL (feature `source`).
+      - name: clippy (Windows camera source)
+        if: runner.os == 'Windows'
+        run: cargo clippy -p wessh-vcam-win --features source --all-targets --profile ci --locked -- -D warnings
+      - name: link the Windows camera source DLL
+        if: runner.os == 'Windows'
+        run: cargo rustc -p wessh-vcam-win --lib --crate-type cdylib --features source --profile ci --locked
       - name: test
         run: cargo test --workspace --profile ci --locked
       # Resolves every download for this platform (GitHub + PyPI + Hugging Face metadata only),
@@ -122,7 +129,7 @@ jobs:
           for target in ${{ matrix.targets }}; do
             cargo build --release --locked --target "$target" -p wessh
           done
-      - name: build Windows console executable
+      - name: build Windows console executable and camera source
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -132,6 +139,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "$releaseDir/wessh.exe" "$releaseDir/wessh-cli.exe"
           Move-Item -Force "$releaseDir/wessh-gui.exe" "$releaseDir/wessh.exe"
+          # The virtual camera's media source, loaded by the Windows camera frame server.
+          cargo rustc --release --locked --target ${{ matrix.targets }} -p wessh-vcam-win --lib --crate-type cdylib --features source
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "$releaseDir/wessh_vcam_win.dll" "$releaseDir/wessh-vcam.dll"
       - name: locate Windows installer compiler
         if: runner.os == 'Windows'
         shell: pwsh

@@ -46,6 +46,12 @@ pub(super) fn stage(update: &Update, archive: &Path, folder: &Path) -> Result<Pr
                 ensure!(entry.is_file(), "invalid executable in update archive");
                 std::io::copy(&mut entry, &mut File::create(workspace.join(name))?)?;
             }
+            // Releases before the virtual camera have no DLL.
+            if let Ok(mut entry) = zip.by_name(WINDOWS_CAMERA_DLL)
+                && entry.is_file()
+            {
+                std::io::copy(&mut entry, &mut File::create(workspace.join(WINDOWS_CAMERA_DLL))?)?;
+            }
             workspace
         }
         InstallKind::Binary => {
@@ -60,6 +66,9 @@ pub(super) fn stage(update: &Update, archive: &Path, folder: &Path) -> Result<Pr
 
 /// The executables of a Windows install; `wessh-cli.exe` is the console build of the same program.
 const WINDOWS_EXECUTABLES: [&str; 2] = ["wessh.exe", "wessh-cli.exe"];
+/// The virtual camera's media source, shipped beside the executables; `wessh camera install`
+/// copies it into place (the app offers that when the installed one is outdated).
+const WINDOWS_CAMERA_DLL: &str = wessh_media::windows_camera::DLL_NAME;
 
 fn stage_bundle(archive: &Path, workspace: &Path) -> Result<PathBuf> {
     let mount = workspace.join("mount");
@@ -100,7 +109,10 @@ pub fn install_and_restart(prepared: &Prepared) -> Result<()> {
         InstallKind::WindowsPortable => {
             let cli = prepared.source.join("wessh-cli.exe");
             check_version(&cli, version)?;
-            let pairs = WINDOWS_EXECUTABLES.map(|name| (prepared.source.join(name), target.path.join(name)));
+            let mut pairs: Vec<_> = WINDOWS_EXECUTABLES.iter().map(|name| (prepared.source.join(name), target.path.join(name))).collect();
+            if prepared.source.join(WINDOWS_CAMERA_DLL).is_file() {
+                pairs.push((prepared.source.join(WINDOWS_CAMERA_DLL), target.path.join(WINDOWS_CAMERA_DLL)));
+            }
             replace_all(&pairs)?;
         }
         InstallKind::Binary | InstallKind::AppImage => {

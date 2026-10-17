@@ -13,6 +13,7 @@ use wessh_core::assets::{self, data_dir};
 use wessh_core::face::Detector;
 use wessh_core::runtime::locate;
 use wessh_core::{Device, Engine, Frame};
+use wessh_media::WindowsCameraStatus;
 
 const V4L2LOOPBACK_LOAD: &str = "sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=wessh exclusive_caps=1";
 
@@ -48,6 +49,9 @@ pub fn run(options: &Options) -> Result<()> {
     check_models(options, &mut report);
     if target.os == Os::Linux {
         check_v4l2loopback(&mut report);
+    }
+    if target.os == Os::Windows {
+        check_windows_camera(&mut report);
     }
 
     println!();
@@ -208,6 +212,22 @@ fn check_models(options: &Options, report: &mut Report) {
     }
     if !absent.is_empty() {
         report.problems.push("some models are missing: run `wessh setup`, or start the app to download them".to_owned());
+    }
+}
+
+fn check_windows_camera(report: &mut Report) {
+    let status = wessh_media::windows_camera::status();
+    row("virtual camera", super::camera::describe(status));
+    match status {
+        WindowsCameraStatus::NotInstalled => {
+            report
+                .suggestions
+                .push("to appear as a webcam in other apps, run `wessh camera install` (asks for administrator rights once)".to_owned());
+        }
+        WindowsCameraStatus::Outdated => {
+            report.problems.push("the virtual camera is from another wessh version: run `wessh camera install`".to_owned());
+        }
+        WindowsCameraStatus::Unsupported | WindowsCameraStatus::Ready => {}
     }
 }
 
