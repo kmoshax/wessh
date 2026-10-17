@@ -158,6 +158,7 @@ struct SteadyFrameRate {
 const EXPOSURE_AUTO_PRIORITY: u32 = 0x009a_0903;
 
 /// Cameras whose exposure priority wessh switched off, one index per line.
+#[cfg(target_os = "linux")]
 fn restore_record() -> std::path::PathBuf {
     wessh_core::assets::data_dir().join("camera-restore")
 }
@@ -169,10 +170,12 @@ fn set_exposure_priority(device: &v4l::Device, on: bool) -> bool {
 }
 
 /// Indices in the restore record.
+#[cfg(target_os = "linux")]
 fn recorded() -> Vec<u32> {
     std::fs::read_to_string(restore_record()).map(|text| text.lines().filter_map(|l| l.trim().parse().ok()).collect()).unwrap_or_default()
 }
 
+#[cfg(target_os = "linux")]
 fn write_record(indices: &[u32]) {
     let path = restore_record();
     if indices.is_empty() {
@@ -188,12 +191,14 @@ fn write_record(indices: &[u32]) {
 /// Call once on start, before any capture.
 pub fn restore_camera_settings() {
     #[cfg(target_os = "linux")]
-    for index in recorded() {
-        if let Ok(device) = v4l::Device::new(index as usize) {
-            set_exposure_priority(&device, true);
+    {
+        for index in recorded() {
+            if let Ok(device) = v4l::Device::new(index as usize) {
+                set_exposure_priority(&device, true);
+            }
         }
+        write_record(&[]);
     }
-    write_record(&[]);
 }
 
 impl SteadyFrameRate {
