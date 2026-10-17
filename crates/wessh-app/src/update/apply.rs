@@ -106,6 +106,7 @@ pub fn install_and_restart(prepared: &Prepared) -> Result<()> {
         InstallKind::Binary | InstallKind::AppImage => {
             let candidate = sibling(&target.path, ".wessh-new-")?;
             fs::copy(&prepared.source, &candidate).context("cannot write to the installation folder; move wessh to a folder you own")?;
+            #[cfg(unix)]
             executable(&candidate)?;
             let checked = check_version(&candidate, version);
             if let Err(e) = checked.and_then(|()| fs::rename(&candidate, &target.path).map_err(Into::into)) {
@@ -197,11 +198,6 @@ fn executable(path: &Path) -> Result<()> {
     /// rwxr-xr-x
     const EXECUTABLE: u32 = 0o755;
     fs::set_permissions(path, fs::Permissions::from_mode(EXECUTABLE))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn executable(_path: &Path) -> Result<()> {
     Ok(())
 }
 
