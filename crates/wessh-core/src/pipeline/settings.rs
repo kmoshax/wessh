@@ -9,8 +9,9 @@ pub struct Settings {
     pub swap_model: SwapModel,
     /// Output size of the swapped face. Above the model's native resolution the model runs on
     /// sub-sampled tiles (`FaceFusion`'s pixel boost): sharper, at `(size / native)²` swaps per face.
-    /// Snapped down to a multiple of the native resolution. `0` ([`super::pixel_boost::AUTO`], the
-    /// default) boosts a 128 px model to 256 px for faces close to the camera, on a fast GPU.
+    /// Snapped down to a multiple of the native resolution; [`super::pixel_boost::AUTO`] boosts a
+    /// 128 px model to 256 px for faces close to the camera, on a fast GPU. Native by default:
+    /// live, the boosted swap's GPU time holds up detection, and frames stutter.
     pub pixel_boost: usize,
     /// Swap every detected face instead of only the largest.
     pub many_faces: bool,
@@ -67,7 +68,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             swap_model: SwapModel::default(),
-            pixel_boost: 0,
+            pixel_boost: SwapModel::default().resolution(),
             many_faces: false,
             max_faces_per_frame: 0,
             face_order: FaceOrder::default(),

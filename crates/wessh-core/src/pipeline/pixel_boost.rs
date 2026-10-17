@@ -21,8 +21,9 @@ pub fn boosted_size(native: usize, requested: usize) -> usize {
 /// The pixel boost that picks the size by itself (see [`choose_size`]).
 pub const AUTO: usize = 0;
 /// What [`AUTO`] boosts a large face to: inswapper's 128 px twice over. 4 swaps per face, 68 ms
-/// instead of 16 ms on an RTX 4050; async timewarp keeps the frame rate, the expression trails
-/// a little more.
+/// instead of 16 ms on an RTX 4050: async timewarp keeps 30 fps, but the expression trails by
+/// about 105 ms instead of 36, and the slowest frames (detection waits for the GPU) take 33 ms
+/// instead of 22. Off by default for that.
 pub const AUTO_SIZE: usize = 256;
 /// [`AUTO`] goes back to the native size only once the face's crop has shrunk this far below
 /// [`AUTO_SIZE`], so a face hovering at the threshold doesn't switch back and forth (each switch
