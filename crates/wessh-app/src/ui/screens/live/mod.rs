@@ -16,7 +16,7 @@ use eframe::egui::{self, ColorImage, Context, Rect, TextureHandle, TextureOption
 use sections::Section;
 use std::path::PathBuf;
 use wessh_core::Settings;
-use wessh_media::{CameraConfig, Devices, LoopbackStatus, OutputTarget, list_devices};
+use wessh_media::{CameraConfig, Devices, LoopbackStatus, OutputTarget, VideoDevice, find_network_cameras, list_devices};
 
 /// Camera and output choices made in the UI (applied on the next Start).
 pub struct LiveForm {
@@ -87,6 +87,8 @@ pub struct Frame<'a> {
     pub intake: Intake,
     /// Cameras and virtual cameras found by the last scan.
     pub devices: Option<&'a Devices>,
+    /// Cameras found on the local network by the last scan.
+    pub network_cameras: &'a [VideoDevice],
     /// A device scan is running.
     pub scanning: bool,
     /// Drawn for the Image or Video screen: hide live-only options.
@@ -124,6 +126,9 @@ pub struct LiveScreen {
     pending_source: Option<PendingSource>,
     devices: Option<Devices>,
     scan: Task<Devices>,
+    /// Network cameras, scanned beside the local devices (it takes a second or two).
+    network_cameras: Vec<VideoDevice>,
+    network_scan: Task<Vec<VideoDevice>>,
     /// See [`LiveScreen::pretend_loopback_missing`].
     loopback_missing: bool,
     /// Modal side sheet open (compact layouts only).
@@ -154,6 +159,10 @@ impl LiveScreen {
         }
         if self.devices.is_none() && !self.scan.is_running() {
             self.scan.spawn(ctx, list_devices);
+            self.network_scan.spawn(ctx, find_network_cameras);
+        }
+        if let Some(cameras) = self.network_scan.poll() {
+            self.network_cameras = cameras;
         }
         if let Some(mut devices) = self.scan.poll() {
             if self.loopback_missing {
@@ -228,7 +237,8 @@ impl LiveScreen {
             source_pending: self.pending_source.is_some(),
             intake: Intake::detect(self.picker.is_open()),
             devices: self.devices.as_ref(),
-            scanning: self.scan.is_running(),
+            network_cameras: &self.network_cameras,
+            scanning: self.scan.is_running() || self.network_scan.is_running(),
             offline,
             actions: Vec::new(),
         };
@@ -284,6 +294,9 @@ impl LiveScreen {
             Action::RefreshDevices => {
                 if !self.scan.is_running() {
                     self.scan.spawn(ctx, list_devices);
+                }
+                if !self.network_scan.is_running() {
+                    self.network_scan.spawn(ctx, find_network_cameras);
                 }
             }
             Action::Notify(message) => self.notify(ctx, message),

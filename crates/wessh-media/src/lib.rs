@@ -8,6 +8,7 @@ mod devices;
 mod error;
 mod ffmpeg;
 mod latest;
+mod network;
 mod sink;
 mod video;
 
@@ -16,5 +17,6 @@ pub use devices::{Devices, LOOPBACK_MODPROBE, LoopbackStatus, VideoDevice, list_
 pub use error::{Error, Result};
 pub use ffmpeg::{bundled_ffmpeg, find_ffmpeg, system_ffmpeg};
 pub use latest::LatestFrame;
+pub use network::find_network_cameras;
 pub use sink::{DEFAULT_LOOPBACK, DEFAULT_STREAM, FrameSink, OutputTarget};
 pub use video::{Encoder, VideoInfo, VideoReader, probe};

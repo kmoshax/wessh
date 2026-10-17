@@ -177,15 +177,16 @@ fn refresh_button(ui: &mut Ui, scanning: bool) -> bool {
 
 /// Address format of phone camera apps (IP Webcam's default port and path).
 const PHONE_URL_EXAMPLE: &str = "http://192.168.1.20:8080/video";
-const PHONE_HELP: &str = "Phone as camera: install IP Webcam (Android) or DroidCam, start its server on the same \
-Wi-Fi, and paste the http:// or rtsp:// address it shows.";
+const PHONE_HELP: &str = "Phone as camera: install IP Webcam (Android) or DroidCam and start its server on the same \
+Wi-Fi. It shows up in the list after a refresh; or paste the http:// or rtsp:// address it shows.";
 
 const RESOLUTIONS: [((usize, usize), &str); 3] = [((640, 480), "480p"), ((1280, 720), "720p"), ((1920, 1080), "1080p")];
 const FRAME_RATES: [(u32, &str); 3] = [(15, "15"), (30, "30"), (60, "60")];
 
 pub(super) fn camera(ui: &mut Ui, frame: &mut Frame<'_>) {
     let live = frame.is_live();
-    let options = frame.devices.map(|d| device_options(&d.cameras, false)).unwrap_or_default();
+    let mut options = frame.devices.map(|d| device_options(&d.cameras, false)).unwrap_or_default();
+    options.extend(device_options(frame.network_cameras, false));
     let scanned = frame.devices.is_some();
     let scanning = frame.scanning;
     let mut refresh = false;
