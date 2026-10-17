@@ -8,8 +8,7 @@
 
 use std::path::Path;
 
-/// The command that creates a v4l2loopback device wessh can write to (`/dev/video10`, named "wessh").
-pub const LOOPBACK_MODPROBE: &str = "sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=wessh exclusive_caps=1";
+pub use wessh_vcam::{LOOPBACK_MODPROBE, LoopbackStatus};
 
 const SYSFS_VIDEO: &str = "/sys/class/video4linux";
 const SYSFS_LOOPBACK_MODULE: &str = "/sys/module/v4l2loopback";
@@ -27,18 +26,6 @@ pub struct VideoDevice {
     pub id: String,
     /// Human-readable name.
     pub name: String,
-}
-
-/// Whether frames can be sent to a v4l2loopback virtual camera.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum LoopbackStatus {
-    /// Not Linux: virtual-camera output goes over a network stream instead.
-    #[default]
-    Unsupported,
-    /// Linux, but the `v4l2loopback` kernel module is not loaded.
-    NotLoaded,
-    /// The module is loaded (devices are listed in [`Devices::outputs`]).
-    Loaded,
 }
 
 /// Everything discovered in one scan.
@@ -63,7 +50,7 @@ pub fn list_devices() -> Devices {
         }
         _ => Devices {
             cameras: crate::camera::native_cameras().into_iter().map(|(index, name)| VideoDevice { id: index.to_string(), name }).collect(),
-            windows_camera: wessh_vcam_win::status(),
+            windows_camera: wessh_vcam::status(),
             ..Devices::default()
         },
     }

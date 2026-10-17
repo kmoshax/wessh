@@ -15,7 +15,7 @@
 # always points at the newest release. Build first with
 #   cargo build --release --target <rust-target> -p wessh
 # (on Windows also `--features console`, copied to wessh-cli.exe, and the virtual camera's
-# media source: `cargo rustc --release --target <rust-target> -p wessh-vcam-win --lib
+# media source: `cargo rustc --release --target <rust-target> -p wessh-vcam --lib
 # --crate-type cdylib --features source`, copied to wessh-vcam.dll).
 set -euo pipefail
 

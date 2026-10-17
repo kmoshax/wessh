@@ -1,6 +1,6 @@
 [package]
-name = "wessh-vcam-win"
-description = "Windows 11 virtual camera: the Media Foundation media source DLL and the client that feeds it"
+name = "wessh-vcam"
+description = "Virtual camera output: v4l2loopback on Linux, Media Foundation on Windows 11 (media source DLL and client)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,11 +8,14 @@ license.workspace = true
 
 [features]
 # Build the media source the Windows camera frame server loads (`DllGetClassObject`). Only the
-# DLL build enables it: `cargo rustc -p wessh-vcam-win --lib --crate-type cdylib --features source`.
+# DLL build enables it: `cargo rustc -p wessh-vcam --lib --crate-type cdylib --features source`.
 source = []
 
 [dependencies]
 thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62"
@@ -34,9 +37,10 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# The workspace lints, except that this crate is the one place `unsafe` is allowed: COM and
-# Win32 calls cannot be made without it. Every unsafe block says why it is sound.
+# The workspace lints, except that `unsafe` is denied rather than forbidden, so the Windows
+# modules (COM and Win32) can allow it; every unsafe block says why it is sound.
 [lints.rust]
+unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 missing_debug_implementations = "allow"
 

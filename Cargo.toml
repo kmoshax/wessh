@@ -12,7 +12,7 @@ repository = "https://github.com/kmoshax/wessh"
 [workspace.dependencies]
 wessh-core = { path = "crates/wessh-core" }
 wessh-media = { path = "crates/wessh-media" }
-wessh-vcam-win = { path = "crates/wessh-vcam-win" }
+wessh-vcam = { path = "crates/wessh-vcam" }
 # ONNX Runtime is loaded at runtime, so the binary stays small and GPU support is a drop-in.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-28", "cuda", "tensorrt", "coreml", "lax-feature-matching"] }
 eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }

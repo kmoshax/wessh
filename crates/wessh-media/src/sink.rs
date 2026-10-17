@@ -4,8 +4,7 @@ use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use wessh_core::Frame;
 
-/// The v4l2loopback device created by [`crate::LOOPBACK_MODPROBE`] (`video_nr=10`).
-pub const DEFAULT_LOOPBACK: &str = "/dev/video10";
+pub use wessh_vcam::DEFAULT_LOOPBACK;
 /// A local UDP MPEG-TS stream that OBS can add as a media source.
 pub const DEFAULT_STREAM: &str = "udp://127.0.0.1:27000";
 /// The target string of the built-in Windows 11 virtual camera.
@@ -18,7 +17,7 @@ pub enum OutputTarget {
     V4l2(String),
     /// A network stream (`udp://`, `tcp://`, `srt://`) that OBS can add as a media source.
     Stream(String),
-    /// The built-in virtual camera (Windows 11, `wessh-vcam-win`).
+    /// The built-in virtual camera (Windows 11, `wessh-vcam`).
     WindowsCamera,
 }
 
@@ -47,7 +46,7 @@ impl OutputTarget {
     pub fn default_for_platform() -> Self {
         if cfg!(target_os = "linux") {
             Self::V4l2(DEFAULT_LOOPBACK.into())
-        } else if wessh_vcam_win::status() != crate::WindowsCameraStatus::Unsupported {
+        } else if wessh_vcam::status() != crate::WindowsCameraStatus::Unsupported {
             Self::WindowsCamera
         } else {
             Self::Stream(DEFAULT_STREAM.into())
@@ -67,22 +66,15 @@ impl OutputTarget {
 enum Backend {
     /// An ffmpeg process reading raw BGR on stdin (streams, video files).
     Ffmpeg { process: Child, stdin: Option<ChildStdin> },
-    /// A v4l2loopback device written directly as YUYV, so live mode needs no ffmpeg.
-    #[cfg(target_os = "linux")]
-    Loopback { device: v4l::Device, yuyv: Vec<u8> },
-    /// The Windows 11 virtual camera; frames are converted straight into its shared memory.
-    #[cfg(windows)]
-    WindowsCamera(wessh_vcam_win::VirtualCamera),
+    /// A virtual camera (v4l2loopback, Windows 11), written directly: live mode needs no ffmpeg.
+    Camera(wessh_vcam::VirtualCamera),
 }
 
 impl std::fmt::Debug for Backend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Ffmpeg { process, .. } => f.debug_struct("Ffmpeg").field("pid", &process.id()).finish(),
-            #[cfg(target_os = "linux")]
-            Self::Loopback { .. } => f.write_str("Loopback"),
-            #[cfg(windows)]
-            Self::WindowsCamera(camera) => camera.fmt(f),
+            Self::Camera(camera) => camera.fmt(f),
         }
     }
 }
@@ -104,31 +96,14 @@ impl FrameSink {
                 cmd.args(["-c:v", "mpeg1video", "-q:v", "3", "-bf", "0", "-f", "mpegts", url]);
                 Self::spawn(cmd, width, height)
             }
-            #[cfg(target_os = "linux")]
-            OutputTarget::V4l2(path) => Self::loopback(path, width, height),
-            #[cfg(not(target_os = "linux"))]
-            OutputTarget::V4l2(_) => Err(Error::Unsupported("v4l2 output is Linux-only; use a udp:// target with OBS")),
-            #[cfg(windows)]
-            OutputTarget::WindowsCamera => {
-                let camera = wessh_vcam_win::VirtualCamera::start(width as u32, height as u32, fps)?;
-                Ok(Self { backend: Backend::WindowsCamera(camera), size: (width, height) })
-            }
-            #[cfg(not(windows))]
-            OutputTarget::WindowsCamera => Err(Error::Unsupported("the built-in virtual camera is Windows-only")),
+            OutputTarget::V4l2(path) => Self::camera(wessh_vcam::Target::Loopback(path), width, height, fps),
+            OutputTarget::WindowsCamera => Self::camera(wessh_vcam::Target::Windows, width, height, fps),
         }
     }
 
-    /// Open a v4l2loopback device for `width`×`height` YUYV output.
-    #[cfg(target_os = "linux")]
-    fn loopback(path: &str, width: usize, height: usize) -> Result<Self> {
-        use v4l::video::Output;
-        let device = v4l::Device::with_path(path)?;
-        let format = v4l::Format::new(width as u32, height as u32, v4l::FourCC::new(b"YUYV"));
-        let set = device.set_format(&format)?;
-        if (set.width as usize, set.height as usize) != (width, height) {
-            return Err(Error::FrameSize { expected: (width, height), got: (set.width as usize, set.height as usize) });
-        }
-        Ok(Self { backend: Backend::Loopback { device, yuyv: vec![0; width * height * 2] }, size: (width, height) })
+    fn camera(target: wessh_vcam::Target<'_>, width: usize, height: usize, fps: u32) -> Result<Self> {
+        let camera = wessh_vcam::VirtualCamera::open(target, width, height, fps)?;
+        Ok(Self { backend: Backend::Camera(camera), size: (width, height) })
     }
 
     pub(crate) fn spawn(mut cmd: Command, width: usize, height: usize) -> Result<Self> {
@@ -144,16 +119,7 @@ impl FrameSink {
         }
         match &mut self.backend {
             Backend::Ffmpeg { stdin, .. } => stdin.as_mut().ok_or(Error::Unsupported("output already closed"))?.write_all(&frame.data)?,
-            #[cfg(target_os = "linux")]
-            Backend::Loopback { device, yuyv } => {
-                crate::convert::bgr_to_yuyv(&frame.data, frame.width, frame.height, yuyv);
-                device.write_all(yuyv)?;
-            }
-            #[cfg(windows)]
-            Backend::WindowsCamera(camera) => {
-                crate::convert::bgr_to_nv12(&frame.data, frame.width, frame.height, camera.frame());
-                camera.publish();
-            }
+            Backend::Camera(camera) => camera.write(&frame.data)?,
         }
         Ok(())
     }
@@ -166,10 +132,7 @@ impl FrameSink {
                 let status = process.wait()?;
                 if status.success() { Ok(()) } else { Err(Error::Exited(status)) }
             }
-            #[cfg(target_os = "linux")]
-            Backend::Loopback { .. } => Ok(()),
-            #[cfg(windows)]
-            Backend::WindowsCamera(_) => Ok(()),
+            Backend::Camera(_) => Ok(()),
         }
     }
 }
@@ -183,10 +146,7 @@ impl Drop for FrameSink {
                 }
                 let _ = process.wait();
             }
-            #[cfg(target_os = "linux")]
-            Backend::Loopback { .. } => {}
-            #[cfg(windows)]
-            Backend::WindowsCamera(_) => {}
+            Backend::Camera(_) => {}
         }
     }
 }

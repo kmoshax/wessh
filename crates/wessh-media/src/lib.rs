@@ -22,4 +22,4 @@ pub use sink::{DEFAULT_LOOPBACK, DEFAULT_STREAM, FrameSink, OutputTarget, WINDOW
 pub use video::{Encoder, VideoInfo, VideoReader, probe};
 /// The Windows 11 virtual camera's status and its install helpers (they report "unsupported"
 /// off Windows).
-pub use wessh_vcam_win::{self as windows_camera, Status as WindowsCameraStatus};
+pub use wessh_vcam::{self as windows_camera, Status as WindowsCameraStatus};

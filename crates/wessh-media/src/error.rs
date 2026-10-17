@@ -21,5 +21,5 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error(transparent)]
-    WindowsCamera(#[from] wessh_vcam_win::Error),
+    WindowsCamera(#[from] wessh_vcam::Error),
 }

@@ -173,25 +173,25 @@ fn start_media_foundation() -> Result<()> {
 
 /// The registered virtual camera and the frames file feeding it. The camera disappears from
 /// other apps when this is dropped (or the process exits).
-pub struct VirtualCamera {
-    camera: IMFVirtualCamera,
+pub struct Camera {
+    device: IMFVirtualCamera,
     frames: Mapping,
     header: Header,
-    /// The frame [`VirtualCamera::frame`] hands out next.
+    /// The frame [`Camera::frame`] hands out next.
     next: u64,
 }
 
 // SAFETY: the camera object is created in the process-wide multithreaded apartment
 // (`CoIncrementMTAUsage`), so it may be used and released from any thread.
-unsafe impl Send for VirtualCamera {}
+unsafe impl Send for Camera {}
 
-impl std::fmt::Debug for VirtualCamera {
+impl std::fmt::Debug for Camera {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VirtualCamera").field("header", &self.header).field("next", &self.next).finish_non_exhaustive()
+        f.debug_struct("Camera").field("header", &self.header).field("next", &self.next).finish_non_exhaustive()
     }
 }
 
-impl VirtualCamera {
+impl Camera {
     /// Register the camera for `width`×`height` NV12 frames at `fps`. Needs Windows 11 and the
     /// installed media source; no administrator rights.
     pub fn start(width: u32, height: u32, fps: u32) -> Result<Self> {
@@ -229,11 +229,11 @@ impl VirtualCamera {
         };
         // SAFETY: a valid camera object; no callback, so the call completes before returning.
         unsafe { camera.Start(None)? };
-        Ok(Self { camera, frames, header, next: 1 })
+        Ok(Self { device: camera, frames, header, next: 1 })
     }
 
     /// The NV12 buffer for the next frame (`width * height * 3 / 2` bytes): fill it, then
-    /// [`VirtualCamera::publish`]. It is shared memory, so writing here is the only copy.
+    /// [`Camera::publish`]. It is shared memory, so writing here is the only copy.
     pub fn frame(&mut self) -> &mut [u8] {
         self.frames.writing().store(self.next, Ordering::Relaxed);
         // Readers that see this frame's bytes also see `writing`, so they can tell a torn copy.
@@ -242,18 +242,25 @@ impl VirtualCamera {
         self.frames.bytes_mut(range).unwrap_or_default()
     }
 
-    /// Make the frame written into [`VirtualCamera::frame`] the one apps receive.
+    /// Convert a BGR frame of the camera's size into the next slot and publish it.
+    pub fn write(&mut self, bgr: &[u8]) {
+        let (width, height) = (self.header.width as usize, self.header.height as usize);
+        crate::convert::bgr_to_nv12(bgr, width, height, self.frame());
+        self.publish();
+    }
+
+    /// Make the frame written into [`Camera::frame`] the one apps receive.
     pub fn publish(&mut self) {
         self.frames.latest().store(self.next, Ordering::Release);
         self.next += 1;
     }
 }
 
-impl Drop for VirtualCamera {
+impl Drop for Camera {
     fn drop(&mut self) {
         // SAFETY: a valid camera object. `Remove` unregisters it (not `Shutdown`, which would
         // shut the media source down twice).
-        let _ = unsafe { self.camera.Remove() };
+        let _ = unsafe { self.device.Remove() };
     }
 }
 

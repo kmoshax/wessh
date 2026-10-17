@@ -15,7 +15,7 @@ use wessh_core::runtime::locate;
 use wessh_core::{Device, Engine, Frame};
 use wessh_media::WindowsCameraStatus;
 
-const V4L2LOOPBACK_LOAD: &str = "sudo modprobe v4l2loopback devices=1 video_nr=10 card_label=wessh exclusive_caps=1";
+use wessh_media::LOOPBACK_MODPROBE as V4L2LOOPBACK_LOAD;
 
 /// Findings that need action.
 #[derive(Default)]
