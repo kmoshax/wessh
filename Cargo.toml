@@ -18,7 +18,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "
 eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 rayon = "1.10"
-parking_lot = "0.12"
+parking_lot = "0.13"
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
